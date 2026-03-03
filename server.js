@@ -148,6 +148,73 @@ app.delete("/api/employees/:id", async (req, res) => {
 });
 
 // 🚀 server start
-app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+app.listen(3001, () => {
+  console.log("Server started on port 3001");
+});
+// ===============================
+// APPLY LEAVE
+// ===============================
+app.post("/api/leaves", async (req, res) => {
+  try {
+    const { employee_id, from_date, to_date, reason } = req.body;
+
+    const { data, error } = await supabase
+      .from("leaves")
+      .insert([
+        {
+          employee_id,
+          from_date,
+          to_date,
+          reason,
+          status: "PENDING",
+        },
+      ])
+      .select();
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ===============================
+// GET ALL LEAVES
+// ===============================
+app.get("/api/leaves", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("leaves")
+      .select("*")
+      .order("id", { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ================================
+// APPROVE / REJECT LEAVE
+// ================================
+app.patch("/api/leaves/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body; // APPROVED or REJECTED
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from("leaves")
+      .update({ status })
+      .eq("id", id)
+      .select();
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
