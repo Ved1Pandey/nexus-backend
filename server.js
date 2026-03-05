@@ -218,3 +218,34 @@ app.patch("/api/leaves/:id/status", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// LOGIN API
+app.post("/api/login", async (req, res) => {
+
+ try {
+
+  const { email, password } = req.body;
+
+  const { data, error } = await supabase
+   .from("users")
+   .select("*")
+   .eq("email", email)
+   .single();
+
+  if (error || !data) {
+   return res.status(401).json({ error: "User not found" });
+  }
+
+  if (String(data.password) !== String(password)) {
+  return res.status(401).json({ error: "Invalid password" });
+}
+  res.json({
+   id: data.id,
+   name: data.name,
+   role: data.role
+  });
+
+ } catch (err) {
+  res.status(500).json({error:
+    err.message});
+  }
+});
