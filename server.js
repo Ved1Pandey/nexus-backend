@@ -7,44 +7,30 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔑 Supabase config
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
 const PORT = 3001;
 
-// ✅ GET all employees
+// ==============================
+// SUPABASE
+// ==============================
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// ==============================
+// EMPLOYEES API
+// ==============================
+
+// GET ALL EMPLOYEES
 app.get("/api/employees", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("employees")
-      .select("*");
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ GET employee by id
-app.get("/api/employees/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { data, error } = await supabase
-      .from("employees")
       .select("*")
-      .eq("id", Number (id))
-      .single();
+      .order("id", { ascending: true });
 
-    if (error) {
-      return res.status(404).json({ error: "Employee not found" });
-    }
+    if (error) throw error;
 
     res.json(data);
   } catch (err) {
@@ -52,25 +38,17 @@ app.get("/api/employees/:id", async (req, res) => {
   }
 });
 
-// ✅ POST add employee
+// ADD EMPLOYEE
 app.post("/api/employees", async (req, res) => {
   try {
     const { name, role, status } = req.body;
 
-    if (!name?.trim() || !role?.trim() || !status?.trim()) {
-      return res.status(400).json({
-        error: "name, role and status are required",
-      });
-    }
-
     const { data, error } = await supabase
       .from("employees")
-      .insert([{ name, role, status }])
+      .insert([{ name, role, status, leave_balance: 20 }])
       .select();
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
+    if (error) throw error;
 
     res.json(data);
   } catch (err) {
@@ -78,82 +56,28 @@ app.post("/api/employees", async (req, res) => {
   }
 });
 
-// ✅ PUT update employee
-app.put("/api/employees/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, role, status } = req.body;
-
-    if (!id || isNaN(Number(id))) {
-      return res.status(400).json({
-        error: "Valid employee id is required",
-      });
-    }
-
-    if (!name || !role || !status) {
-      return res.status(400).json({
-        error: "name, role and status are required",
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("employees")
-      .update({ name, role, status })
-      .eq("id", id)
-      .select();
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: "Employee not found" });
-    }
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ DELETE employee
+// DELETE EMPLOYEE
 app.delete("/api/employees/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    if (!id || isNaN(id)) {
-      return res.status(400).json({
-        error: "Valid employee id is required",
-      });
-    }
-
     const { data, error } = await supabase
       .from("employees")
       .delete()
-      .eq("id", id)
-      .select();
+      .eq("id", id);
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
+    if (error) throw error;
 
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: "Employee not found" });
-    }
-
-    res.json({ message: "Employee deleted successfully" });
+    res.json({ message: "Employee deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 🚀 server start
-app.listen(3001, () => {
-  console.log("Server started on port 3001");
-});
-// ===============================
+// ==============================
 // APPLY LEAVE
-// ===============================
+// ==============================
+
 app.post("/api/leaves", async (req, res) => {
   try {
     const { employee_id, from_date, to_date, reason } = req.body;
@@ -179,10 +103,10 @@ app.post("/api/leaves", async (req, res) => {
   }
 });
 
-
-// ===============================
+// ==============================
 // GET ALL LEAVES
-// ===============================
+// ==============================
+
 app.get("/api/leaves", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -197,55 +121,97 @@ app.get("/api/leaves", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-// ================================
+
+// ==============================
 // APPROVE / REJECT LEAVE
-// ================================
+// ==============================
+
 app.patch("/api/leaves/:id/status", async (req, res) => {
   try {
-    const { status } = req.body; // APPROVED or REJECTED
-    const { id } = req.params;
+    const { status } = req.body;
+    const leaveId = req.params.id;
 
-    const { data, error } = await supabase
+    // GET LEAVE
+    const { data: leaveData, error: leaveError } = await supabase
+      .from("leaves")
+      .select("*")
+      .eq("id", leaveId)
+      .single();
+
+    if (leaveError) throw leaveError;
+
+    // UPDATE STATUS
+    const { error: updateError } = await supabase
       .from("leaves")
       .update({ status })
-      .eq("id", id)
-      .select();
+      .eq("id", leaveId);
 
-    if (error) throw error;
+    if (updateError) throw updateError;
 
-    res.json(data);
+    // IF APPROVED → DEDUCT LEAVE BALANCE
+    if (status === "APPROVED") {
+      const from = new Date(leaveData.from_date);
+      const to = new Date(leaveData.to_date);
+
+      const diffDays =
+        Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
+
+      const { data: emp } = await supabase
+        .from("employees")
+        .select("leave_balance")
+        .eq("id", leaveData.employee_id)
+        .single();
+
+      const newBalance = emp.leave_balance - diffDays;
+
+      await supabase
+        .from("employees")
+        .update({ leave_balance: newBalance })
+        .eq("id", leaveData.employee_id);
+    }
+
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ==============================
 // LOGIN API
+// ==============================
+
 app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
- try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", email)
+      .single();
 
-  const { email, password } = req.body;
+    if (error || !data) {
+      return res.status(401).json({ error: "User not found" });
+    }
 
-  const { data, error } = await supabase
-   .from("users")
-   .select("*")
-   .eq("email", email)
-   .single();
+    if (String(data.password) !== String(password)) {
+      return res.status(401).json({ error: "Invalid password" });
+    }
 
-  if (error || !data) {
-   return res.status(401).json({ error: "User not found" });
+    res.json({
+      id: data.id,
+      name: data.name,
+      role: data.role,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
+});
 
-  if (String(data.password) !== String(password)) {
-  return res.status(401).json({ error: "Invalid password" });
-}
-  res.json({
-   id: data.id,
-   name: data.name,
-   role: data.role
-  });
+// ==============================
+// SERVER START
+// ==============================
 
- } catch (err) {
-  res.status(500).json({error:
-    err.message});
-  }
+app.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
 });
