@@ -25,54 +25,104 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // GET ALL EMPLOYEES
 app.get("/api/employees", async (req, res) => {
   try {
+
     const { data, error } = await supabase
       .from("employees")
       .select("*")
-      .order("id", { ascending: true });
+      .order("id",{ascending:true})
 
-    if (error) throw error;
+    if(error) throw error
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json(data)
+
+  } catch(err) {
+
+    res.status(500).json({error:err.message})
+
   }
 });
+
 
 // ADD EMPLOYEE
 app.post("/api/employees", async (req, res) => {
   try {
+
     const { name, role, status } = req.body;
 
     const { data, error } = await supabase
       .from("employees")
-      .insert([{ name, role, status, leave_balance: 20 }])
-      .select();
+      .insert([
+        {
+          name,
+          role,
+          status,
+          leave_balance:20
+        }
+      ])
+      .select()
 
-    if (error) throw error;
+    if(error) throw error
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json(data)
+
+  } catch(err){
+
+    res.status(500).json({error:err.message})
+
   }
 });
+
 
 // DELETE EMPLOYEE
 app.delete("/api/employees/:id", async (req, res) => {
   try {
-    const id = Number(req.params.id);
 
-    const { data, error } = await supabase
+    const id = Number(req.params.id)
+
+    const { error } = await supabase
       .from("employees")
       .delete()
-      .eq("id", id);
+      .eq("id",id)
 
-    if (error) throw error;
+    if(error) throw error
 
-    res.json({ message: "Employee deleted" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({message:"Employee deleted"})
+
+  } catch(err){
+
+    res.status(500).json({error:err.message})
+
   }
 });
+
+
+// ==============================
+// MANAGER TEAM API
+// ==============================
+
+app.get("/api/team/:managerId", async (req,res)=>{
+
+try{
+
+const managerId = req.params.managerId
+
+const {data,error} = await supabase
+.from("employees")
+.select("*")
+.eq("manager_id",managerId)
+
+if(error) throw error
+
+res.json(data)
+
+}catch(err){
+
+res.status(500).json({error:err.message})
+
+}
+
+})
+
 
 // ==============================
 // APPLY LEAVE
@@ -80,6 +130,7 @@ app.delete("/api/employees/:id", async (req, res) => {
 
 app.post("/api/leaves", async (req, res) => {
   try {
+
     const { employee_id, from_date, to_date, reason } = req.body;
 
     const { data, error } = await supabase
@@ -90,123 +141,163 @@ app.post("/api/leaves", async (req, res) => {
           from_date,
           to_date,
           reason,
-          status: "PENDING",
-        },
+          status:"PENDING"
+        }
       ])
-      .select();
+      .select()
 
-    if (error) throw error;
+    if(error) throw error
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json(data)
+
+  } catch(err){
+
+    res.status(500).json({error:err.message})
+
   }
 });
 
+
 // ==============================
-// GET ALL LEAVES
+// GET LEAVES + EMPLOYEE NAME
 // ==============================
 
-app.get("/api/leaves", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("leaves")
-      .select("*")
-      .order("id", { ascending: false });
+app.get("/api/leaves", async (req,res)=>{
 
-    if (error) throw error;
+try{
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+const {data,error} = await supabase
+.from("leaves")
+.select(`
+id,
+from_date,
+to_date,
+reason,
+status,
+employee_id,
+employees(name)
+`)
+.order("id",{ascending:false})
+
+if(error) throw error
+
+res.json(data)
+
+}catch(err){
+
+res.status(500).json({error:err.message})
+
+}
+
+})
+
 
 // ==============================
 // APPROVE / REJECT LEAVE
 // ==============================
 
 app.patch("/api/leaves/:id/status", async (req, res) => {
+
   try {
+
     const { status } = req.body;
     const leaveId = req.params.id;
 
-    // GET LEAVE
-    const { data: leaveData, error: leaveError } = await supabase
+    const { data:leaveData, error:leaveError } = await supabase
       .from("leaves")
       .select("*")
-      .eq("id", leaveId)
-      .single();
+      .eq("id",leaveId)
+      .single()
 
-    if (leaveError) throw leaveError;
+    if(leaveError) throw leaveError
 
-    // UPDATE STATUS
-    const { error: updateError } = await supabase
+    const { error:updateError } = await supabase
       .from("leaves")
-      .update({ status })
-      .eq("id", leaveId);
+      .update({status})
+      .eq("id",leaveId)
 
-    if (updateError) throw updateError;
+    if(updateError) throw updateError
 
-    // IF APPROVED → DEDUCT LEAVE BALANCE
-    if (status === "APPROVED") {
-      const from = new Date(leaveData.from_date);
-      const to = new Date(leaveData.to_date);
+
+    if(status==="APPROVED"){
+
+      const from = new Date(leaveData.from_date)
+      const to = new Date(leaveData.to_date)
 
       const diffDays =
-        Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
+      Math.ceil((to-from)/(1000*60*60*24))+1
 
-      const { data: emp } = await supabase
-        .from("employees")
-        .select("leave_balance")
-        .eq("id", leaveData.employee_id)
-        .single();
+      const {data:emp} = await supabase
+      .from("employees")
+      .select("leave_balance")
+      .eq("id",leaveData.employee_id)
+      .single()
 
-      const newBalance = emp.leave_balance - diffDays;
+      const newBalance =
+      emp.leave_balance - diffDays
 
       await supabase
-        .from("employees")
-        .update({ leave_balance: newBalance })
-        .eq("id", leaveData.employee_id);
+      .from("employees")
+      .update({leave_balance:newBalance})
+      .eq("id",leaveData.employee_id)
+
     }
 
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({success:true})
+
+  } catch(err){
+
+    res.status(500).json({error:err.message})
+
   }
+
 });
+
 
 // ==============================
 // LOGIN API
 // ==============================
 
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
+app.post("/api/login", async (req,res)=>{
 
-    const { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("email", email)
-      .single();
+try{
 
-    if (error || !data) {
-      return res.status(401).json({ error: "User not found" });
-    }
+const {email,password} = req.body
 
-    if (String(data.password) !== String(password)) {
-      return res.status(401).json({ error: "Invalid password" });
-    }
+const {data,error} = await supabase
+.from("users")
+.select("*")
+.eq("email",email)
+.single()
 
-    res.json({
-      id: data.id,
-      name: data.name,
-      role: data.role,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+if(error || !data){
+
+return res.status(401).json({error:"User not found"})
+
+}
+
+if(String(data.password)!==String(password)){
+
+return res.status(401).json({error:"Invalid password"})
+
+}
+
+res.json({
+
+id:data.id,
+name:data.name,
+role:data.role
+
+})
+
+}catch(err){
+
+res.status(500).json({error:err.message})
+
+}
+
+})
+
 
 // ==============================
 // SERVER START
