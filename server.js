@@ -42,7 +42,6 @@ app.get("/api/employees", async (req, res) => {
   }
 });
 
-
 // ADD EMPLOYEE
 app.post("/api/employees", async (req, res) => {
   try {
