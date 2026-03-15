@@ -44,6 +44,7 @@ app.get("/api/employees", async (req, res) => {
 
 // ADD EMPLOYEE
 app.post("/api/employees", async (req, res) => {
+
   try {
 
     const { name, role, status } = req.body;
@@ -128,35 +129,43 @@ res.status(500).json({error:err.message})
 // ==============================
 
 app.post("/api/leaves", async (req, res) => {
+
   try {
 
-    const { employee_id, from_date, to_date, reason } = req.body;
+    const { employee_id, from_date, to_date, reason } = req.body
+
+    // date normalize (YYYY-MM-DD)
+    const fromDate = new Date(from_date).toISOString().split("T")[0]
+    const toDate = new Date(to_date).toISOString().split("T")[0]
 
     const { data, error } = await supabase
       .from("leaves")
       .insert([
         {
           employee_id,
-          from_date,
-          to_date,
+          from_date: fromDate,
+          to_date: toDate,
           reason,
-          status:"PENDING"
+          status: "PENDING"
         }
       ])
       .select()
 
-    if(error) throw error
+    if (error) {
+      console.log("SUPABASE ERROR:", error)
+      return res.status(500).json({ error: error.message })
+    }
 
     res.json(data)
 
-  } catch(err){
+  } catch (err) {
 
-    res.status(500).json({error:err.message})
+    console.log("SERVER ERROR:", err)
+    res.status(500).json({ error: err.message })
 
   }
-});
 
-
+})
 // ==============================
 // GET LEAVES + EMPLOYEE NAME
 // ==============================
@@ -264,7 +273,7 @@ try{
 const {email,password} = req.body
 
 const {data,error} = await supabase
-.from("users")
+.from("Email")
 .select("*")
 .eq("email",email)
 .single()
@@ -280,6 +289,11 @@ if(String(data.password)!==String(password)){
 return res.status(401).json({error:"Invalid password"})
 
 }
+const { data:emp } = await supabase
+.from("employees")
+.select("id")
+.eq("name", data.name)
+.single()
 
 res.json({
 
