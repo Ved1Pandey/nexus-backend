@@ -10,9 +10,16 @@ app.use(express.json());
 const PORT = 3001;
 
 // ==============================
-// 🔥 ROLE NORMALIZER
+// SUPABASE
 // ==============================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
+// ==============================
+// ROLE NORMALIZER
+// ==============================
 const normalizeRole = (role) => {
   if (!role) return "Employee";
 
@@ -25,62 +32,27 @@ const normalizeRole = (role) => {
 };
 
 // ==============================
-// SUPABASE
-// ==============================
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// ==============================
 // EMPLOYEES
 // ==============================
-
 app.get("/api/employees", async (req, res) => {
-  const { data, error } = await supabase
-    .from("employees")
-    .select("*")
-    .order("id");
+  try {
+    const { data, error } = await supabase
+      .from("employees")
+      .select("*")
+      .order("id");
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    console.log("EMP ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post("/api/employees", async (req, res) => {
-  const { name, role, status, manager_id, email } = req.body;
-
-  const { data, error } = await supabase
-    .from("employees")
-    .insert([
-      {
-        name,
-        role,
-        status,
-        email: email?.toLowerCase(),
-        manager_id: manager_id || null,
-        leave_balance: 20,
-      },
-    ])
-    .select();
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-app.delete("/api/employees/:id", async (req, res) => {
-  const { error } = await supabase
-    .from("employees")
-    .delete()
-    .eq("id", req.params.id);
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
-});
 // ==============================
 // TEAM
 // ==============================
-
 app.get("/api/team/:userId/:role", async (req, res) => {
   try {
     const userId = Number(req.params.userId);
@@ -134,11 +106,12 @@ app.get("/api/team/:userId/:role", async (req, res) => {
 // LEAVES
 // ==============================
 
+// APPLY
 app.post("/api/leaves", async (req, res) => {
   try {
     const { employee_id, from_date, to_date, reason } = req.body;
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("leaves")
       .insert([
         {
@@ -148,17 +121,19 @@ app.post("/api/leaves", async (req, res) => {
           reason,
           status: "PENDING",
         },
-      ])
-      .select();
+      ]);
+
     if (error) throw error;
 
-    res.json(data);
+    res.json({ message: "Leave applied" });
 
   } catch (err) {
-    console.log("LEAVE ERROR:", err);
+    console.log("APPLY ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
+
+// GET LEAVES
 app.get("/api/leaves/:userId/:role", async (req, res) => {
   try {
     const userId = Number(req.params.userId);
@@ -175,6 +150,7 @@ app.get("/api/leaves/:userId/:role", async (req, res) => {
 
       result = data || [];
     }
+
     else if (role === "Team Lead") {
       const { data: team } = await supabase
         .from("employees")
@@ -196,7 +172,8 @@ app.get("/api/leaves/:userId/:role", async (req, res) => {
         .from("employees")
         .select("id")
         .eq("manager_id", userId);
-const tlIds = tls?.map(t => t.id) || [];
+
+      const tlIds = tls?.map(t => t.id) || [];
 
       const { data: team } = await supabase
         .from("employees")
@@ -214,62 +191,58 @@ const tlIds = tls?.map(t => t.id) || [];
     }
 
     res.json(result);
-} catch (err) {
-    console.log("LEAVE FETCH ERROR:", err);
+
+  } catch (err) {
+    console.log("FETCH LEAVE ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ==============================
-// ATTENDANCE
-// ==============================
-app.post("/api/attendance/checkin", async (req, res) => 
-  { try {
-      const { employee_id } = req.body;
-    const today = new Date().toISOString().split("T")[0];
-const { data, error } = await supabase
-      .from("attendance")
-      .insert([
-        {
-          employee_id: Number(employee_id),
-          date: today,
-          check_in: new Date(),
-        },
-      ])
-.select();
-
-    if (error) throw error;
-res.json(data);
-
-  } catch (err) {
-console.log("CHECKIN ERROR:", err);
-res.status(500).json({ error: err.message });
-}
-});
-
-app.post("/api/attendance/checkout", async (req, res) => {
+// APPROVE / REJECT + BALANCE UPDATE
+app.patch("/api/leaves/:id/status", async (req, res) => {
   try {
-const { employee_id } = req.body;
-    const today = new Date().toISOString().split("T")[0];
+    const { id } = req.params;
+    const { status } = req.body;
 
-    const { error } = await supabase
-      .from("attendance")
-      .update({ check_out: new Date() })
-      .eq("employee_id", Number(employee_id))
-      .eq("date", today);
+    const { data: leave, error } = await supabase
+      .from("leaves")
+      .update({ status })
+      .eq("id", id)
+      .select()
+      .single();
 
     if (error) throw error;
+
+    // 🔥 BALANCE LOGIC
+    if (status === "APPROVED") {
+      const days =
+        (new Date(leave.to_date) - new Date(leave.from_date)) /
+          (1000 * 60 * 60 * 24) + 1;
+
+      const { data: emp } = await supabase
+        .from("employees")
+        .select("leave_balance")
+        .eq("id", leave.employee_id)
+        .single();
+
+      const newBalance = Math.max(0, emp.leave_balance - days);
+
+      await supabase
+        .from("employees")
+        .update({ leave_balance: newBalance })
+        .eq("id", leave.employee_id);
+    }
 
     res.json({ success: true });
 
   } catch (err) {
-    console.log("CHECKOUT ERROR:", err);
+    console.log("STATUS ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ==============================
-// LOGIN (🔥 FINAL FIX)
+// LOGIN
 // ==============================
 app.post("/api/login", async (req, res) => {
   try {
@@ -277,12 +250,12 @@ app.post("/api/login", async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    const { data: users, error } = await supabase
+    const { data: users } = await supabase
       .from("Email")
       .select("*")
       .eq("email", cleanEmail);
 
-    if (error || !users || users.length === 0) {
+    if (!users || users.length === 0) {
       return res.status(401).json({ error: "User not found" });
     }
 
@@ -298,10 +271,6 @@ app.post("/api/login", async (req, res) => {
       .eq("id", user.id)
       .single();
 
-    if (!emp) {
-      return res.status(404).json({ error: "Employee not found" });
-    }
-
     res.json({
       id: emp.id,
       name: emp.name,
@@ -313,10 +282,10 @@ app.post("/api/login", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 // ==============================
 // START
 // ==============================
-
 app.listen(PORT, () => {
   console.log("🚀 Server running on port", PORT);
 });
