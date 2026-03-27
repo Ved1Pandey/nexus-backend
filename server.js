@@ -89,3 +89,54 @@ app.post("/api/leaves", async (req, res) => {
 app.listen(PORT, () => {
   console.log("🚀 Server running on", PORT);
 });
+app.get("/api/leaves/:userId/:role", async (req, res) => {
+
+  const { userId, role } = req.params;
+
+  try {
+
+    let query = "";
+
+    // EMPLOYEE → अपनी leaves
+    if (role === "employee") {
+      query = `
+        SELECT * FROM leaves 
+        WHERE employee_id = ${userId}
+      `;
+    }
+
+    // MANAGER / TL → team leaves
+    else {
+      query = `
+        SELECT l.*, e.name 
+        FROM leaves l
+        JOIN employees e ON l.employee_id = e.id
+      `;
+    }
+
+    const result = await pool.query(query);
+
+    res.json(result.rows);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+
+});
+app.patch("/api/leaves/:id/status", async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  try {
+    await pool.query(
+      "UPDATE leaves SET status = $1 WHERE id = $2",
+      [status, id]
+    );
+
+    res.json({ message: "Updated" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
