@@ -1,142 +1,132 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { createClient } = require("@supabase/supabase-js");
+require("dotenv").config();
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
+const { createClient } = require("@supabase/supabase-js");
+
+// ✅ SUPABASE CONNECT
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_KEY
 );
 
-const PORT = 3001;
 
-// ===== LOGIN =====
-app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
 
-  const { data: users, error } = await supabase
-    .from("Email")
-    .select("*")
-    .eq("email", email.toLowerCase().trim());
-
-  if (error || !users || users.length === 0) {
-    return res.status(401).json({ error: "User not found" });
-  }
-
-  const user = users[0];
-
-  if (String(user.password) !== String(password)) {
-    return res.status(401).json({ error: "Wrong password" });
-  }
-
-  const { data: emp } = await supabase
-    .from("employees")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
-  res.json({
-    id: emp.id,
-    name: emp.name,
-    role: emp.role,
-  });
-});
-
-// ===== GET LEAVES =====
-app.get("/api/leaves/:userId", async (req, res) => {
-  const userId = Number(req.params.userId);
-
-  const { data, error } = await supabase
-    .from("leaves")
-    .select("*")
-    .eq("employee_id", userId);
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  res.json(data);
-});
-
-// ===== APPLY LEAVE =====
+// ================= APPLY LEAVE =================
 app.post("/api/leaves", async (req, res) => {
+  const { employee_id, from_date, to_date, reason } = req.body;
+
+  if (!employee_id) {
+    return res.status(400).json({ error: "employee_id missing" });
+  }
+
   try {
-    const { employee_id, from_date, to_date, reason } = req.body;
+    const { data, error } = await supabase
+      .from("leaves")
+      .insert([
+        {
+          employee_id,
+          from_date,
+          to_date,
+          reason,
+          status: "PENDING"
+        }
+      ]);
 
-    const { data, error } = await supabase.from("leaves").insert([
-      {
-        employee_id: Number(employee_id),
-        from_date,
-        to_date,
-        reason,
-        status: "PENDING",
-      },
-    ]);
+    if (error) return res.status(500).json({ error });
 
-    if (error) {
-      console.error(error);
-      return res.status(500).json({ error: error.message });
-    }
+    res.json({ success: true, data });
 
-    res.json({ message: "Leave applied", data });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-app.listen(PORT, () => {
-  console.log("🚀 Server running on", PORT);
-});
+
+
+// ================= GET LEAVES =================
 app.get("/api/leaves/:userId/:role", async (req, res) => {
 
   const { userId, role } = req.params;
 
   try {
 
-    let query = "";
+    // 🔥 MANAGER / TEAM LEAD
+    if (role.includes("manager") || role.includes("team")) {
 
-    // EMPLOYEE → अपनी leaves
-    if (role === "employee") {
-      query = `
-        SELECT * FROM leaves 
-        WHERE employee_id = ${userId}
-      `;
+      // team fetch
+      const { data: team, error: teamError } = await supabase
+        .from("employees")
+        .select("id")
+        .eq("manager_id", userId);
+
+      if (teamError) return res.status(500).json({ error: teamError });
+
+      const ids = team.map(e => e.id);
+
+      // leaves fetch
+      const { data, error } = await supabase
+        .from("leaves")
+        .select("*, employees(name)")
+        .in("employee_id", ids);
+
+      if (error) return res.status(500).json({ error });
+
+      return res.json(data);
     }
 
-    // MANAGER / TL → team leaves
-    else {
-      query = `
-        SELECT l.*, e.name 
-        FROM leaves l
-        JOIN employees e ON l.employee_id = e.id
-      `;
-    }
+    // 🔥 EMPLOYEE
+    const { data, error } = await supabase
+      .from("leaves")
+      .select("*")
+      .eq("employee_id", userId);
 
-    const result = await pool.query(query);
+    if (error) return res.status(500).json({ error });
 
-    res.json(result.rows);
+    res.json(data);
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
-
 });
+
+
+
+// ================= APPROVE / REJECT =================
 app.patch("/api/leaves/:id/status", async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
   try {
-    await pool.query(
-      "UPDATE leaves SET status = $1 WHERE id = $2",
-      [status, id]
-    );
 
-    res.json({ message: "Updated" });
+    const { data, error } = await supabase
+      .from("leaves")
+      .update({ status })
+      .eq("id", id);
+
+    if (error) return res.status(500).json({ error });
+
+    res.json({ success: true, data });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
+});
+
+
+
+// ================= SERVER =================
+console.log(process.env.SUPABASE_URL);
+console.log(process.env.SUPABASE_ANON_KEY);
+app.listen(3001, () => {
+  console.log("Server running on http://localhost:3001");
 });
