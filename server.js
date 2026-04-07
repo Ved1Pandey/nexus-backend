@@ -11,7 +11,13 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = 3001;
-const JWT_SECRET = "secret123";
+
+// ==============================
+// ENV CONFIG
+// ==============================
+const JWT_SECRET = process.env.JWT_SECRET || "secret123"; // ✅ fallback
+
+console.log("JWT_SECRET:", JWT_SECRET); // 🔥 DEBUG
 
 // ==============================
 // SUPABASE INIT
@@ -25,14 +31,14 @@ const supabase = createClient(
 // ROLE NORMALIZER
 // ==============================
 const normalizeRole = (role) => {
-  if (!role) return "employee";
+  if (!role) return "Employee";
 
   const r = role.toLowerCase();
 
-  if (r.includes("manager")) return "manager";
-  if (r.includes("lead")) return "team lead";
+  if (r.includes("manager")) return "Manager";
+  if (r.includes("lead")) return "Team Lead";
 
-  return "employee";
+  return "Employee";
 };
 
 // ==============================
@@ -100,7 +106,7 @@ app.post("/api/login", async (req, res) => {
     const payload = {
       id: emp.id,
       name: emp.name,
-      role: emp.role,
+      role: normalizeRole(emp.role),
     };
 
     const token = jwt.sign(payload, JWT_SECRET, {
@@ -130,7 +136,7 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
       .from("leaves")
       .insert([
         {
-          employee_id: String(req.user.id),
+          employee_id: req.user.id,
           from_date,
           to_date,
           reason,
@@ -140,9 +146,9 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
       .select();
 
     if (error) {
-  console.error("SUPABASE ERROR:", error);
-  return res.status(500).json({ error });
-}
+      console.error("SUPABASE ERROR:", error);
+      return res.status(500).json({ error });
+    }
 
     res.json({ success: true, data });
 
@@ -158,21 +164,19 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
 app.get("/api/leaves", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    const role = normalizeRole(req.user.role);
+    const role = req.user.role;
 
     let query = supabase
       .from("leaves")
       .select("*, employees(name)");
 
-    if (role === "employee") {
+    if (role === "Employee") {
       query = query.eq("employee_id", userId);
     }
 
     const { data, error } = await query;
 
     if (error) throw error;
-
-    console.log("FETCHED LEAVES:", data);
 
     res.json(data || []);
 
@@ -183,14 +187,14 @@ app.get("/api/leaves", authMiddleware, async (req, res) => {
 });
 
 // ==============================
-// APPROVE / REJECT
+// UPDATE STATUS (PATCH FIXED)
 // ==============================
 app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!["APPROVED", "REJECTED"].includes(status)) {
-      return res.status(400).json({ error: "Invalid status" });
+    if (!["Manager", "Team Lead"].includes(req.user.role)) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const { error } = await supabase
