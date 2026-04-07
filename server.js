@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
@@ -10,11 +11,11 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = 3001;
+const JWT_SECRET = "secret123";
 
 // ==============================
-// SUPABASE INIT (HARDCODED - WORKING)
+// SUPABASE INIT
 // ==============================
-
 const supabase = createClient(
   "https://odswgsvccutgwwnoappf.supabase.co",
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9kc3dnc3ZjY3V0Z3d3bm9hcHBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NDM5NzIsImV4cCI6MjA4NzMxOTk3Mn0.4wNjBNqIqK4HUvWFu0Z5GejpvLsqTeLrXZwBbpuCtkg"
@@ -23,7 +24,6 @@ const supabase = createClient(
 // ==============================
 // ROLE NORMALIZER
 // ==============================
-
 const normalizeRole = (role) => {
   if (!role) return "employee";
 
@@ -36,9 +36,36 @@ const normalizeRole = (role) => {
 };
 
 // ==============================
+// JWT MIDDLEWARE
+// ==============================
+const authMiddleware = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({ error: "No token provided" });
+    }
+
+    if (!authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Invalid token format" });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const user = jwt.verify(token, JWT_SECRET);
+
+    req.user = user;
+    next();
+
+  } catch (err) {
+    console.error("AUTH ERROR:", err.message);
+    return res.status(403).json({ error: "Invalid token" });
+  }
+};
+
+// ==============================
 // LOGIN
 // ==============================
-
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -70,11 +97,18 @@ app.post("/api/login", async (req, res) => {
 
     if (empError) throw empError;
 
-    res.json({
+    const payload = {
       id: emp.id,
       name: emp.name,
       role: emp.role,
+    };
+
+    const token = jwt.sign(payload, JWT_SECRET, {
+      expiresIn: "1h",
     });
+
+    res.json({ token, user: payload });
+
   } catch (err) {
     console.error("LOGIN ERROR:", err.message);
     res.status(500).json({ error: err.message });
@@ -84,26 +118,36 @@ app.post("/api/login", async (req, res) => {
 // ==============================
 // APPLY LEAVE
 // ==============================
-
-app.post("/api/leaves", async (req, res) => {
+app.post("/api/leaves", authMiddleware, async (req, res) => {
   try {
-    const { employee_id, from_date, to_date, reason } = req.body;
+    const { from_date, to_date, reason } = req.body;
 
-    const { error } = await supabase.from("leaves").insert([
-      {
-        employee_id,
-        from_date,
-        to_date,
-        reason,
-        status: "PENDING",
-      },
-    ]);
+    if (!from_date || !to_date || !reason) {
+      return res.status(400).json({ error: "All fields required" });
+    }
 
-    if (error) throw error;
+    const { data, error } = await supabase
+      .from("leaves")
+      .insert([
+        {
+          employee_id: String(req.user.id),
+          from_date,
+          to_date,
+          reason,
+          status: "PENDING",
+        },
+      ])
+      .select();
 
-    res.json({ success: true });
+    if (error) {
+  console.error("SUPABASE ERROR:", error);
+  return res.status(500).json({ error });
+}
+
+    res.json({ success: true, data });
+
   } catch (err) {
-    console.error("APPLY LEAVE ERROR:", err.message);
+    console.error("APPLY ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -111,32 +155,27 @@ app.post("/api/leaves", async (req, res) => {
 // ==============================
 // GET LEAVES
 // ==============================
-
-app.get("/api/leaves/:userId/:role", async (req, res) => {
+app.get("/api/leaves", authMiddleware, async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
-    const role = normalizeRole(req.params.role);
+    const userId = req.user.id;
+    const role = normalizeRole(req.user.role);
 
-    let data;
+    let query = supabase
+      .from("leaves")
+      .select("*, employees(name)");
 
     if (role === "employee") {
-      const resDb = await supabase
-        .from("leaves")
-        .select("*, employees(name)")
-        .eq("employee_id", userId);
-
-      if (resDb.error) throw resDb.error;
-      data = resDb.data;
-    } else {
-      const resDb = await supabase
-        .from("leaves")
-        .select("*, employees(name)");
-
-      if (resDb.error) throw resDb.error;
-      data = resDb.data;
+      query = query.eq("employee_id", userId);
     }
 
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    console.log("FETCHED LEAVES:", data);
+
     res.json(data || []);
+
   } catch (err) {
     console.error("GET LEAVES ERROR:", err.message);
     res.status(500).json({ error: err.message });
@@ -146,8 +185,7 @@ app.get("/api/leaves/:userId/:role", async (req, res) => {
 // ==============================
 // APPROVE / REJECT
 // ==============================
-
-app.patch("/api/leaves/:id/status", async (req, res) => {
+app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -163,6 +201,7 @@ app.patch("/api/leaves/:id/status", async (req, res) => {
     if (error) throw error;
 
     res.json({ success: true });
+
   } catch (err) {
     console.error("STATUS ERROR:", err.message);
     res.status(500).json({ error: err.message });
@@ -170,39 +209,15 @@ app.patch("/api/leaves/:id/status", async (req, res) => {
 });
 
 // ==============================
-// TEAM VIEW
+// HEALTH
 // ==============================
-
-app.get("/api/team/:userId", async (req, res) => {
-  try {
-    const userId = Number(req.params.userId);
-
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*")
-      .eq("manager_id", userId);
-
-    if (error) throw error;
-
-    res.json(data || []);
-  } catch (err) {
-    console.error("TEAM ERROR:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==============================
-// HEALTH CHECK
-// ==============================
-
 app.get("/", (req, res) => {
-  res.send("NexusHR Backend Running 🚀");
+  res.send("Backend Running 🚀");
 });
 
 // ==============================
 // START
 // ==============================
-
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
