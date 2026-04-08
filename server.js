@@ -11,13 +11,9 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = 3001;
+const JWT_SECRET = process.env.JWT_SECRET || "secret123";
 
-// ==============================
-// ENV CONFIG
-// ==============================
-const JWT_SECRET = process.env.JWT_SECRET || "secret123"; // ✅ fallback
-
-console.log("JWT_SECRET:", JWT_SECRET); // 🔥 DEBUG
+console.log("JWT_SECRET:", JWT_SECRET);
 
 // ==============================
 // SUPABASE INIT
@@ -42,18 +38,18 @@ const normalizeRole = (role) => {
 };
 
 // ==============================
-// JWT MIDDLEWARE
+// AUTH MIDDLEWARE
 // ==============================
 const authMiddleware = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader) {
-      return res.status(401).json({ error: "No token provided" });
+      return res.status(401).json({ error: "No token" });
     }
 
     if (!authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Invalid token format" });
+      return res.status(401).json({ error: "Invalid format" });
     }
 
     const token = authHeader.split(" ")[1];
@@ -76,12 +72,10 @@ app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const cleanEmail = email.toLowerCase().trim();
-
     const { data: users, error } = await supabase
       .from("Email")
       .select("*")
-      .eq("email", cleanEmail);
+      .eq("email", email.toLowerCase().trim());
 
     if (error) throw error;
 
@@ -110,7 +104,7 @@ app.post("/api/login", async (req, res) => {
     };
 
     const token = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: "1h",
+      expiresIn: "7d",
     });
 
     res.json({ token, user: payload });
@@ -128,10 +122,6 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
   try {
     const { from_date, to_date, reason } = req.body;
 
-    if (!from_date || !to_date || !reason) {
-      return res.status(400).json({ error: "All fields required" });
-    }
-
     const { data, error } = await supabase
       .from("leaves")
       .insert([
@@ -145,15 +135,11 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
       ])
       .select();
 
-    if (error) {
-      console.error("SUPABASE ERROR:", error);
-      return res.status(500).json({ error });
-    }
+    if (error) throw error;
 
-    res.json({ success: true, data });
+    res.json(data);
 
   } catch (err) {
-    console.error("APPLY ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -163,37 +149,32 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
 // ==============================
 app.get("/api/leaves", authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const role = req.user.role;
+    let query = supabase.from("leaves").select("*");
 
-    let query = supabase
-      .from("leaves")
-      .select("*, employees(name)");
-
-    if (role === "Employee") {
-      query = query.eq("employee_id", userId);
+    if (req.user.role === "Employee") {
+      query = query.eq("employee_id", req.user.id);
     }
 
     const { data, error } = await query;
 
     if (error) throw error;
 
-    res.json(data || []);
+    res.json(data);
 
   } catch (err) {
-    console.error("GET LEAVES ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ==============================
-// UPDATE STATUS (PATCH FIXED)
+// UPDATE STATUS ✅ FIXED
 // ==============================
 app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!["Manager", "Team Lead"].includes(req.user.role)) {
+    // 🔥 FIX: lowercase check
+    if (!["manager", "team lead"].includes(req.user.role.toLowerCase())) {
       return res.status(403).json({ error: "Access denied" });
     }
 
@@ -207,20 +188,10 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
     res.json({ success: true });
 
   } catch (err) {
-    console.error("STATUS ERROR:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ==============================
-// HEALTH
-// ==============================
-app.get("/", (req, res) => {
-  res.send("Backend Running 🚀");
-});
-
-// ==============================
-// START
 // ==============================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
