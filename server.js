@@ -13,16 +13,13 @@ app.use(express.json());
 const PORT = 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "secret123";
 
-// ==============================
-// SUPABASE INIT
-// ==============================
 const supabase = createClient(
   "https://odswgsvccutgwwnoappf.supabase.co",
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9kc3dnc3ZjY3V0Z3d3bm9hcHBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NDM5NzIsImV4cCI6MjA4NzMxOTk3Mn0.4wNjBNqIqK4HUvWFu0Z5GejpvLsqTeLrXZwBbpuCtkg"
 );
 
 // ==============================
-// ROLE NORMALIZER
+// ROLE
 // ==============================
 const normalizeRole = (role) => {
   if (!role) return "Employee";
@@ -50,7 +47,6 @@ const authMiddleware = (req, res, next) => {
 
     req.user = user;
     next();
-
   } catch (err) {
     return res.status(403).json({ error: "Invalid token" });
   }
@@ -102,11 +98,11 @@ app.post("/api/login", async (req, res) => {
 });
 
 // ==============================
-// APPLY LEAVE
+// APPLY LEAVE (WITH TYPE)
 // ==============================
 app.post("/api/leaves", authMiddleware, async (req, res) => {
   try {
-    const { from_date, to_date, reason } = req.body;
+    const { from_date, to_date, reason, type } = req.body;
 
     const { data, error } = await supabase
       .from("leaves")
@@ -116,6 +112,7 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
           from_date,
           to_date,
           reason,
+          type, // ✅ NEW
           status: "PENDING",
         },
       ])
@@ -143,6 +140,7 @@ app.get("/api/leaves", authMiddleware, async (req, res) => {
         to_date,
         reason,
         status,
+        type,
         employee_id,
         employees(name)
       `);
@@ -175,7 +173,11 @@ app.get("/api/leave-balance", authMiddleware, async (req, res) => {
 
     if (error) throw error;
 
-    res.json(data);
+    res.json({
+      CL: data.cl,
+      SL: data.sl,
+      PL: data.pl,
+    });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -183,7 +185,7 @@ app.get("/api/leave-balance", authMiddleware, async (req, res) => {
 });
 
 // ==============================
-// UPDATE STATUS + DEDUCT
+// APPROVE / REJECT + DEDUCT
 // ==============================
 app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   try {
@@ -199,7 +201,6 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
       .eq("id", req.params.id)
       .single();
 
-    // ❌ self approval block
     if (leave.employee_id === req.user.id) {
       return res.status(400).json({ error: "Cannot approve own leave" });
     }
@@ -209,21 +210,29 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
       .update({ status })
       .eq("id", req.params.id);
 
-    // 🔥 deduct CL
+    // ✅ DEDUCT LOGIC
     if (status === "APPROVED") {
       const days =
         (new Date(leave.to_date) - new Date(leave.from_date)) /
           (1000 * 60 * 60 * 24) +
         1;
 
+      const { data: balance } = await supabase
+        .from("leave_balances")
+        .select("*")
+        .eq("employee_id", leave.employee_id)
+        .single();
+
+      let updateData = {};
+
+      if (leave.type === "CL") updateData.cl = balance.cl - days;
+      if (leave.type === "SL") updateData.sl = balance.sl - days;
+      if (leave.type === "PL") updateData.pl = balance.pl - days;
+
       await supabase
         .from("leave_balances")
-        .update({
-          CL: supabase.rpc("decrement_cl", {
-            emp_id: leave.employee_id,
-            days: days,
-          }),
-        });
+        .update(updateData)
+        .eq("employee_id", leave.employee_id);
     }
 
     res.json({ success: true });
@@ -233,7 +242,6 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   }
 });
 
-// ==============================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
