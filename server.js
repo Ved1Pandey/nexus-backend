@@ -98,12 +98,40 @@ app.post("/api/login", async (req, res) => {
 });
 
 // ==============================
-// APPLY LEAVE (WITH TYPE)
+// APPLY LEAVE (VALIDATION + NO DUPLICATE)
 // ==============================
 app.post("/api/leaves", authMiddleware, async (req, res) => {
   try {
     const { from_date, to_date, reason, type } = req.body;
 
+    if (!from_date || !to_date || !reason || !type) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    if (new Date(from_date) > new Date(to_date)) {
+      return res.status(400).json({ error: "Invalid date range" });
+    }
+
+    // ❌ CHECK OVERLAP
+    const { data: existing } = await supabase
+      .from("leaves")
+      .select("*")
+      .eq("employee_id", req.user.id);
+
+    const overlap = existing.some((l) => {
+      return (
+        new Date(from_date) <= new Date(l.to_date) &&
+        new Date(to_date) >= new Date(l.from_date)
+      );
+    });
+
+    if (overlap) {
+      return res.status(400).json({
+        error: "Leave already exists on these dates ❌",
+      });
+    }
+
+    // ✅ INSERT
     const { data, error } = await supabase
       .from("leaves")
       .insert([
@@ -112,7 +140,7 @@ app.post("/api/leaves", authMiddleware, async (req, res) => {
           from_date,
           to_date,
           reason,
-          type, // ✅ NEW
+          type,
           status: "PENDING",
         },
       ])
@@ -185,7 +213,7 @@ app.get("/api/leave-balance", authMiddleware, async (req, res) => {
 });
 
 // ==============================
-// APPROVE / REJECT + DEDUCT
+// APPROVE / REJECT + DEDUCTION
 // ==============================
 app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   try {
@@ -201,16 +229,23 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
       .eq("id", req.params.id)
       .single();
 
+    if (!leave) {
+      return res.status(404).json({ error: "Leave not found" });
+    }
+
     if (leave.employee_id === req.user.id) {
       return res.status(400).json({ error: "Cannot approve own leave" });
     }
 
+    // update status
     await supabase
       .from("leaves")
       .update({ status })
       .eq("id", req.params.id);
 
-    // ✅ DEDUCT LOGIC
+    // ============================
+    // ✅ DEDUCTION LOGIC
+    // ============================
     if (status === "APPROVED") {
       const days =
         (new Date(leave.to_date) - new Date(leave.from_date)) /
@@ -225,9 +260,23 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
 
       let updateData = {};
 
-      if (leave.type === "CL") updateData.cl = balance.cl - days;
-      if (leave.type === "SL") updateData.sl = balance.sl - days;
-      if (leave.type === "PL") updateData.pl = balance.pl - days;
+      if (leave.type === "CL") {
+        if (balance.cl < days)
+          return res.status(400).json({ error: "Not enough CL ❌" });
+        updateData.cl = balance.cl - days;
+      }
+
+      if (leave.type === "SL") {
+        if (balance.sl < days)
+          return res.status(400).json({ error: "Not enough SL ❌" });
+        updateData.sl = balance.sl - days;
+      }
+
+      if (leave.type === "PL") {
+        if (balance.pl < days)
+          return res.status(400).json({ error: "Not enough PL ❌" });
+        updateData.pl = balance.pl - days;
+      }
 
       await supabase
         .from("leave_balances")
@@ -242,6 +291,7 @@ app.patch("/api/leaves/:id/status", authMiddleware, async (req, res) => {
   }
 });
 
+// ==============================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
