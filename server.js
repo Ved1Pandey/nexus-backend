@@ -168,10 +168,10 @@ app.get("/api/leaves", authMiddleware, async (req, res) => {
   // ==============================
   // GET LEAVES (Team)
   // ==============================
- app.get("/api/team-leaves", authMiddleware, async (req, res) => {
+ app.get("/api/team-leaves", async (req, res) => {
   try {
-    const userId = req.user.id;
-const role = req.user.role;
+    const userId = 8; // temporary
+const role = "Team Lead"; //
 
 let employeeIds = [];
 
@@ -180,11 +180,11 @@ if (role === "Team Lead") {
   const { data: team } = await supabase
     .from("employees")
     .select("id")
-    .eq("manager_id", userId);
+   // .eq("manager_id", userId);// temporary disable
 
-  employeeIds = team.map(e => e.id);
+  employeeIds = team.map(e => e.id)
+console.log("EMPLOYEE IDS (TL):", employeeIds);
 }
-
 // ✅ MANAGER → all except self
 else if (role === "Manager") {
   const { data: all } = await supabase
@@ -192,7 +192,8 @@ else if (role === "Manager") {
     .select("id")
     .neq("id", userId);
 
-  employeeIds = all.map(e => e.id);
+  employeeIds = all.map(e => e.id)
+console.log("EMPLOYEE IDS (Manager):", employeeIds);
 }
 
 // ❌ no team
@@ -204,7 +205,7 @@ if (!employeeIds.length) {
 const { data, error } = await supabase
   .from("leaves")
   .select("*, employees(name, role)")
-  .in("employee_id", employeeIds)
+  //.in("employee_id", employeeIds)
   .order("from_date", { ascending: false });
 
 if (error) throw error;
@@ -221,17 +222,17 @@ res.json(data);
   // ==============================
   app.get("/api/leave-balance", authMiddleware, async (req, res) => {
     try {
-      const { data } = await supabase
-        .from("leave_balances")
-        .select("*")
-        .eq("employee_id", req.user.id)
-        .single();
+    const { data } = await supabase
+  .from("employees")
+  .select("cl, sl, pl")
+  .eq("id", req.user.id)
+  .single();
 
-      res.json({
-        CL: data.cl,
-        SL: data.sl,
-        PL: data.pl,
-      });
+res.json({
+  CL: data.cl,
+  SL: data.sl,
+  PL: data.pl,
+});
 
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -326,8 +327,6 @@ res.json(data);
     }
   });
 
-  // ==============================
-  // ==============================
   // UPDATE LEAVE STATUS (Manager)
   // ==============================
 app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
@@ -342,9 +341,42 @@ app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
       .eq("id", id)
       .single();
 
-    if (!leave) return res.status(404).json({ error: "Leave not found" });
+    if (!leave) {
+      return res.status(404).json({ error: "Leave not found" });
+    }
 
-    // 2. update status
+    // 2. ONLY IF APPROVED → deduct balance
+    if (status === "APPROVED") {
+  const days =
+    (new Date(leave.to_date) - new Date(leave.from_date)) /
+      (1000 * 60 * 60 * 24) + 1;
+
+  let column = "";
+
+  if (leave.type === "CL") column = "cl";
+  else if (leave.type === "SL") column = "sl";
+  else column = "pl";
+
+  const { data: emp } = await supabase
+    .from("employees")
+    .select("cl, sl, pl")
+    .eq("id", leave.employee_id)
+    .single();
+
+  if (!emp) {
+    return res.status(400).json({ error: "Employee not found" });
+  }
+
+  const newBalance = Math.max((emp[column] || 0) - days, 0);
+
+  await supabase
+    .from("employees")
+    .update({ [column]: newBalance })
+    .eq("id", leave.employee_id);
+}
+
+
+    // 3. update leave status (LAST में)
     const { data, error } = await supabase
       .from("leaves")
       .update({ status })
@@ -353,36 +385,9 @@ app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
 
     if (error) throw error;
 
-    // 🔥 3. ONLY if APPROVED → deduct balance
-    if (status === "APPROVED") {
-      const days =
-        (new Date(leave.to_date) - new Date(leave.from_date)) /
-          (1000 * 60 * 60 * 24) +
-        1;
-
-      // get current balance
-      const { data: balance } = await supabase
-        .from("leave_balance")
-        .select("*")
-        .eq("employee_id", leave.employee_id)
-        .single();
-
-      if (!balance) {
-        return res.status(400).json({ error: "Balance not found" });
-      }
-
-      const updated = {
-        ...balance,
-        [leave.type]: balance[leave.type] - days,
-      };
-
-      await supabase
-        .from("leave_balance")
-        .update(updated)
-        .eq("employee_id", leave.employee_id);
-    }
-
+    // FINAL RESPONSE
     res.json(data);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
