@@ -332,6 +332,7 @@ res.json({
 app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
+  console.log("STATUS:", status);
 
   try {
     // 1. get leave data
@@ -341,15 +342,24 @@ app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
       .eq("id", id)
       .single();
 
+console.log("OLD STATUS:",
+leave?.status)
+
     if (!leave) {
       return res.status(404).json({ error: "Leave not found" });
     }
 
     // 2. ONLY IF APPROVED → deduct balance
-    if (status === "APPROVED") {
+ console.log("STATUS:", status);
+console.log("OLD STATUS:", leave.status);
+
+if (status === "APPROVED" && leave.status !=="APPROVED") {
+  console.log("ENTERED APPROVED BLOCK");
+
   const days =
+  Math.ceil(
     (new Date(leave.to_date) - new Date(leave.from_date)) /
-      (1000 * 60 * 60 * 24) + 1;
+      (1000 * 60 * 60 * 24)) + 1;
 
   let column = "";
 
@@ -357,17 +367,20 @@ app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
   else if (leave.type === "SL") column = "sl";
   else column = "pl";
 
+  console.log("COLUMN:", column);
+  console.log("DAYS:", days);
+
   const { data: emp } = await supabase
     .from("employees")
     .select("cl, sl, pl")
     .eq("id", leave.employee_id)
     .single();
 
-  if (!emp) {
-    return res.status(400).json({ error: "Employee not found" });
-  }
+  console.log("EMP:", emp);
 
   const newBalance = Math.max((emp[column] || 0) - days, 0);
+
+  console.log("NEW BALANCE:", newBalance);
 
   await supabase
     .from("employees")
