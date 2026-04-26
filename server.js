@@ -74,11 +74,15 @@
         return res.status(401).json({ error: "Wrong password" });
       }
 
-      const { data: emp } = await supabase
-        .from("employees")
-        .select("*")
-        .eq("id", user.id)
-        .single();
+      const { data: emp, error: empError } = await supabase
+  .from("employees")
+  .select("*")
+  .eq("id", user.id)
+  .single();
+
+if (empError || !emp) {
+  return res.status(500).json({ error: "Employee not found" });
+}
 
       const payload = {
         id: emp.id,
