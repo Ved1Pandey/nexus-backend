@@ -422,14 +422,29 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
 // ==============================
 app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
     const filePath = req.file.path;
 
     const dataBuffer = fs.readFileSync(filePath);
-    const pdfData = await pdfParse(dataBuffer);
 
-    const text = pdfData.text;
+    let text = "";
 
-    fs.unlinkSync(filePath); // cleanup
+    try {
+      // 🔥 यही fix है
+      const pdfData = await pdfParse(dataBuffer);
+      text = pdfData.text;
+
+      console.log("TEXT LENGTH:", text.length);
+
+    } catch (err) {
+      console.log("PDF PARSE FAILED:", err.message);
+      return res.status(500).json({ error: "PDF parse failed" });
+    }
+
+    fs.unlinkSync(filePath);
 
     res.json({ text });
 
@@ -437,25 +452,59 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 // ==============================
 // ATS - MATCH SCORE
 // ==============================
 app.post("/api/match", async (req, res) => {
   try {
     const { resumeText = "", jobDesc = "" } = req.body || {};
+console.log("RESUME LENGTH:", resumeText.length);
+console.log("JD:", jobDesc);
+    // 🔹 STOPWORDS (faltu words hatao)
+    const stopwords = ["the", "is", "and", "of", "in", "to"];
 
-    const resumeWords = resumeText.toLowerCase().split(/\W+/);
-    const jdWords = jobDesc.toLowerCase().split(/\W+/);
+    // 🔹 CLEAN FUNCTION
+    const clean = (text) =>
+      text
+        .toLowerCase()
+        .replace(/[^\w\s]/g, "")
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopwords.includes(w));
 
-    const matchCount = jdWords.filter(word =>
-      resumeWords.includes(word)
-    ).length;
+    const resumeWords = new Set(clean(resumeText));
+    const jdWords = clean(jobDesc);
+    const uniqueJD = [...new Set(jdWords)];
 
-    const score = jdWords.length
-  ? ((matchCount / jdWords.length) * 100).toFixed(2)
-  : "0.00";
+    // 🔹 SYNONYMS MAP
+    const synonyms = {
+  tat: ["turnaround", "time"],
+  sla: ["service", "level", "agreement"],
+  ops: ["operations"],
+  hr: ["human", "resource"],
 
+  sap: ["s4hana", "sd"],
+  excel: ["advanced", "spreadsheet"],
+  crm: ["customer", "management"],
+  mis: ["reporting"],
+};
+
+    let matchCount = 0;
+
+    uniqueJD.forEach(word => {
+      // direct match
+      if (resumeWords.has(word)) {
+        matchCount++;
+      }
+      // synonym match
+      else if (synonyms[word]) {
+        const found = synonyms[word].some(s => resumeWords.has(s));
+        if (found) matchCount++;
+      }
+    });
+
+    const score = uniqueJD.length
+      ? ((matchCount / uniqueJD.length) * 100).toFixed(2)
+      : "0.00";
 
     res.json({ score });
 
@@ -464,6 +513,6 @@ app.post("/api/match", async (req, res) => {
   }
 });
 
-
   // test change
-    // test change
+  // test change
+  // test change
