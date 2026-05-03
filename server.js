@@ -1,11 +1,15 @@
   require("dotenv").config();
 
   const express = require("express");
+  const app = express();
   const cors = require("cors");
   const jwt = require("jsonwebtoken");
   const { createClient } = require("@supabase/supabase-js");
-
-  const app = express();
+  const multer = require("multer");
+  const pdfParse = require("pdf-parse");
+  const fs = require("fs");
+  const upload = multer({ dest: "uploads/" });
+  
 
   app.use(cors());
   app.use(express.json());
@@ -413,7 +417,53 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
+// ==============================
+// ATS - RESUME UPLOAD
+// ==============================
+app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
+  try {
+    const filePath = req.file.path;
 
+    const dataBuffer = fs.readFileSync(filePath);
+    const pdfData = await pdfParse(dataBuffer);
+
+    const text = pdfData.text;
+
+    fs.unlinkSync(filePath); // cleanup
+
+    res.json({ text });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==============================
+// ATS - MATCH SCORE
+// ==============================
+app.post("/api/match", async (req, res) => {
+  try {
+    const { resumeText = "", jobDesc = "" } = req.body || {};
+
+    const resumeWords = resumeText.toLowerCase().split(/\W+/);
+    const jdWords = jobDesc.toLowerCase().split(/\W+/);
+
+    const matchCount = jdWords.filter(word =>
+      resumeWords.includes(word)
+    ).length;
+
+    const score = jdWords.length
+  ? ((matchCount / jdWords.length) * 100).toFixed(2)
+  : "0.00";
+
+
+    res.json({ score });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
   // test change
+    // test change
