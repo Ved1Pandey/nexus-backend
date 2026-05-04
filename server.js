@@ -427,43 +427,43 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
     }
 
     const filePath = req.file.path;
-
     const dataBuffer = fs.readFileSync(filePath);
 
-    let text = "";
-
-    try {
-      // 🔥 यही fix है
-      const pdfData = await pdfParse(dataBuffer);
-      text = pdfData.text;
-
-      console.log("TEXT LENGTH:", text.length);
-
-    } catch (err) {
-      console.log("PDF PARSE FAILED:", err.message);
-      return res.status(500).json({ error: "PDF parse failed" });
-    }
+    const pdfData = await pdfParse(dataBuffer);
+    const text = pdfData.text;
 
     fs.unlinkSync(filePath);
 
-    res.json({ text });
+    const { data, error } = await supabase
+  .from("candidates")
+  .insert([{ resume_text: text }])
+  .select();
+
+if (error) {
+  console.log("SUPABASE ERROR:", error);
+  return res.status(500).json({ error: error.message });
+}
+
+res.json({
+  text,
+  candidateId: data[0].id
+});
+
 
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}); 
 // ==============================
 // ATS - MATCH SCORE
 // ==============================
 app.post("/api/match", async (req, res) => {
   try {
-    const { resumeText = "", jobDesc = "" } = req.body || {};
-console.log("RESUME LENGTH:", resumeText.length);
-console.log("JD:", jobDesc);
-    // 🔹 STOPWORDS (faltu words hatao)
+    const { resumeText = "", jobDesc = "", candidateId } = req.body || {};
+
+
     const stopwords = ["the", "is", "and", "of", "in", "to"];
 
-    // 🔹 CLEAN FUNCTION
     const clean = (text) =>
       text
         .toLowerCase()
@@ -475,27 +475,21 @@ console.log("JD:", jobDesc);
     const jdWords = clean(jobDesc);
     const uniqueJD = [...new Set(jdWords)];
 
-    // 🔹 SYNONYMS MAP
     const synonyms = {
-  tat: ["turnaround", "time"],
-  sla: ["service", "level", "agreement"],
-  ops: ["operations"],
-  hr: ["human", "resource"],
-
-  sap: ["s4hana", "sd"],
-  excel: ["advanced", "spreadsheet"],
-  crm: ["customer", "management"],
-  mis: ["reporting"],
-};
+      tat: ["turnaround", "time"],
+      sla: ["service", "level", "agreement"],
+      ops: ["operations"],
+      hr: ["human", "resource"],
+      sap: ["s4hana", "sd"],
+      excel: ["advanced", "spreadsheet"],
+      crm: ["customer", "management"],
+      mis: ["reporting"],
+    };
 
     let matchCount = 0;
 
     uniqueJD.forEach(word => {
-      // direct match
-      if (resumeWords.has(word)) {
-        matchCount++;
-      }
-      // synonym match
+      if (resumeWords.has(word)) matchCount++;
       else if (synonyms[word]) {
         const found = synonyms[word].some(s => resumeWords.has(s));
         if (found) matchCount++;
@@ -505,6 +499,10 @@ console.log("JD:", jobDesc);
     const score = uniqueJD.length
       ? ((matchCount / uniqueJD.length) * 100).toFixed(2)
       : "0.00";
+await supabase
+  .from("candidates")
+  .update({ score: Number(score) })
+  .eq("resume_text", candidateId);
 
     res.json({ score });
 
@@ -512,9 +510,18 @@ console.log("JD:", jobDesc);
     res.status(500).json({ error: err.message });
   }
 });
+app.get("/api/candidates", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("candidates")
+      .select("*")
+      .order("score", { ascending: false });
 
-  // test change
-  // test change
-  // test change
-  // test change
-  // test change
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
