@@ -458,6 +458,7 @@ res.json({
 // ATS - MATCH SCORE
 // ==============================
 app.post("/api/match", async (req, res) => {
+  console.log("REQ BODY:", req.body);
   try {
     const { resumeText = "", jobDesc = "", candidateId } = req.body || {};
 
@@ -499,10 +500,28 @@ app.post("/api/match", async (req, res) => {
     const score = uniqueJD.length
       ? ((matchCount / uniqueJD.length) * 100).toFixed(2)
       : "0.00";
-await supabase
+    // 🔥 DEBUG (upar hi daal)
+console.log("BODY:", req.body);
+console.log("CANDIDATE ID:", candidateId);
+
+// 🔥 SAFETY CHECK
+if (!candidateId) {
+  console.log("❌ candidateId missing");
+  return res.status(400).json({ error: "candidateId missing" });
+}
+
+// 🔥 UPDATE SCORE
+const { data: updated, error } = await supabase
   .from("candidates")
   .update({ score: Number(score) })
-  .eq("resume_text", candidateId);
+  .eq("id", Number(candidateId))
+  .select();
+
+console.log("UPDATED ROW:", updated);
+
+if (error) {
+  console.log("UPDATE ERROR:", error);
+}
 
     res.json({ score });
 
@@ -524,4 +543,4 @@ app.get("/api/candidates", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+// test change
