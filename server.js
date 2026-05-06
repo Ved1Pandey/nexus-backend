@@ -434,9 +434,14 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
 
     fs.unlinkSync(filePath);
 
-    const { data, error } = await supabase
+const email = req.body.email;
+
+const { data, error } = await supabase
   .from("candidates")
-  .insert([{ resume_text: text }])
+  .upsert([{
+    resume_text: text,  
+    email: email
+  }])
   .select();
 
 if (error) {
@@ -543,4 +548,5 @@ app.get("/api/candidates", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// test change
 // test change
