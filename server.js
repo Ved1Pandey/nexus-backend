@@ -10,9 +10,9 @@
   const fs = require("fs");
   const upload = multer({ dest: "uploads/" });
   
-
   app.use(cors());
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   const PORT = 3001;
   const JWT_SECRET = process.env.JWT_SECRET || "secret123";
@@ -413,15 +413,16 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
     res.status(500).json({ error: err.message });
   }
 });
-
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
 // ==============================
 // ATS - RESUME UPLOAD
 // ==============================
 app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
   try {
+    const email = req.body.email;
+    console.log("EMAIL:", email);
+    console.log("REQ BODY:", req.body);
+
+
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -429,27 +430,53 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
     const filePath = req.file.path;
     const dataBuffer = fs.readFileSync(filePath);
 
-    const pdfData = await pdfParse(dataBuffer);
-    const text = pdfData.text;
+  const pdfData = await pdfParse(dataBuffer);
+const text = pdfData.text;
 
-    fs.unlinkSync(filePath);
+console.log("PDF TEXT LENGTH:", text?.length);
 
-const email = req.body.email;
+fs.unlinkSync(filePath);
 
 const { data, error } = await supabase
   .from("candidates")
-  .upsert([{
-    resume_text: text,  
-    email: email
-  }])
+  .upsert(
+    [
+      {
+        resume_text: text,
+        email: email
+      }
+    ],
+    {
+      onConflict: "email"
+    }
+  )
   .select();
 
+console.log("SUPABASE DATA:", data);
+console.log("SUPABASE ERROR:", error);
+
 if (error) {
-  console.log("SUPABASE ERROR:", error);
   return res.status(500).json({ error: error.message });
 }
 
-res.json({
+if (!data || !data.length) {
+  return res.status(500).json({ error: "No candidate returned" });
+}
+
+if (error) {
+  console.log("SUPABASE ERROR:", error);
+  return res.status(500).json({
+    error: error.message
+  });
+}
+
+if (!data || !data.length) {
+  return res.status(500).json({
+    error: "No candidate returned"
+  });
+}
+
+return res.json({
   text,
   candidateId: data[0].id
 });
@@ -458,27 +485,50 @@ res.json({
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-}); 
+});
 // ==============================
 // ATS - MATCH SCORE
 // ==============================
 app.post("/api/match", async (req, res) => {
-  console.log("REQ BODY:", req.body);
   try {
-    const { resumeText = "", jobDesc = "", candidateId } = req.body || {};
+    console.log("BODY:", req.body);
 
+    const {
+      text: resumeText = "",
+      jobDesc = "",
+      candidateId
+    } = req.body || {};
 
-    const stopwords = ["the", "is", "and", "of", "in", "to"];
+    if (!candidateId) {
+      return res.status(400).json({
+        error: "candidateId missing"
+      });
+    }
+
+    const stopwords = [
+      "the",
+      "is",
+      "and",
+      "of",
+      "in",
+      "to"
+    ];
 
     const clean = (text) =>
       text
         .toLowerCase()
         .replace(/[^\w\s]/g, "")
         .split(/\s+/)
-        .filter(w => w.length > 2 && !stopwords.includes(w));
+        .filter(
+          (w) =>
+            w.length > 2 &&
+            !stopwords.includes(w)
+        );
 
     const resumeWords = new Set(clean(resumeText));
+
     const jdWords = clean(jobDesc);
+
     const uniqueJD = [...new Set(jdWords)];
 
     const synonyms = {
@@ -494,44 +544,44 @@ app.post("/api/match", async (req, res) => {
 
     let matchCount = 0;
 
-    uniqueJD.forEach(word => {
-      if (resumeWords.has(word)) matchCount++;
-      else if (synonyms[word]) {
-        const found = synonyms[word].some(s => resumeWords.has(s));
+    uniqueJD.forEach((word) => {
+      if (resumeWords.has(word)) {
+        matchCount++;
+      } else if (synonyms[word]) {
+        const found = synonyms[word].some(
+          (s) => resumeWords.has(s)
+        );
+
         if (found) matchCount++;
       }
     });
 
     const score = uniqueJD.length
-      ? ((matchCount / uniqueJD.length) * 100).toFixed(2)
+      ? (
+          (matchCount / uniqueJD.length) *
+          100
+        ).toFixed(2)
       : "0.00";
-    // 🔥 DEBUG (upar hi daal)
-console.log("BODY:", req.body);
-console.log("CANDIDATE ID:", candidateId);
 
-// 🔥 SAFETY CHECK
-if (!candidateId) {
-  console.log("❌ candidateId missing");
-  return res.status(400).json({ error: "candidateId missing" });
-}
+    const { error } = await supabase
+      .from("candidates")
+      .update({
+        score: Number(score)
+      })
+      .eq("id", Number(candidateId));
 
-// 🔥 UPDATE SCORE
-const { data: updated, error } = await supabase
-  .from("candidates")
-  .update({ score: Number(score) })
-  .eq("id", Number(candidateId))
-  .select();
+    if (error) {
+      return res.status(500).json({
+        error: error.message
+      });
+    }
 
-console.log("UPDATED ROW:", updated);
-
-if (error) {
-  console.log("UPDATE ERROR:", error);
-}
-
-    res.json({ score });
+    return res.json({ score });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      error: err.message
+    });
   }
 });
 app.get("/api/candidates", async (req, res) => {
@@ -550,3 +600,9 @@ app.get("/api/candidates", async (req, res) => {
 });
 // test change
 // test change
+
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
+
+  //git test
