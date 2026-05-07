@@ -563,12 +563,16 @@ app.post("/api/match", async (req, res) => {
         ).toFixed(2)
       : "0.00";
 
-    const { error } = await supabase
-      .from("candidates")
-      .update({
-        score: Number(score)
-      })
-      .eq("id", Number(candidateId));
+    const { data, error } = await supabase
+    .from("candidates")
+    .update({
+    score: Number(score)
+    })
+    .eq("id", Number(candidateId))
+    .select();
+
+    console.log("UPDATED:", data);
+    console.log("UPDATE ERROR:", error);
 
     if (error) {
       return res.status(500).json({
@@ -605,4 +609,5 @@ app.get("/api/candidates", async (req, res) => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
 
+  //git test
   //git test
