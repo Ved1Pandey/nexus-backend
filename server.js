@@ -498,6 +498,10 @@ app.post("/api/match", async (req, res) => {
       jobDesc = "",
       candidateId
     } = req.body || {};
+    console.log("REQ BODY:", req.body);
+    console.log("RESUME TEXT:", resumeText?.length);
+    console.log("JOB DESC:", jobDesc);
+    console.log("CANDIDATE:", candidateId);
 
     if (!candidateId) {
       return res.status(400).json({
