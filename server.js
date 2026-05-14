@@ -434,6 +434,28 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
 const text = pdfData.text;
 
 console.log("PDF TEXT LENGTH:", text?.length);
+const fileName = `${Date.now()}-${req.file.originalname}`;
+
+const fileBuffer = fs.readFileSync(filePath);
+
+const { data: storageData, error: storageError } =
+  await supabase.storage
+    .from("resumes")
+    .upload(fileName, fileBuffer, {
+      contentType: "application/pdf",
+    });
+
+if (storageError) {
+  console.log("STORAGE ERROR:", storageError);
+}
+
+const { data: publicData } = supabase.storage
+  .from("resumes")
+  .getPublicUrl(fileName);
+
+const publicUrl = publicData.publicUrl;
+
+console.log("PUBLIC URL:", publicUrl);
 
 fs.unlinkSync(filePath);
 
@@ -478,7 +500,8 @@ if (!data || !data.length) {
 
 return res.json({
   text,
-  candidateId: data[0].id
+  candidateId: data[0].id,
+  publicUrl,
 });
 
 
@@ -618,5 +641,5 @@ app.get("/api/candidates", async (req, res) => {
   //git test
   //git test
   //git test
-  
   //git test
+  
