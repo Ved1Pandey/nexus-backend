@@ -558,16 +558,20 @@ app.post("/api/match", async (req, res) => {
 
     const uniqueJD = [...new Set(jdWords)];
 
-    const synonyms = {
-      tat: ["turnaround", "time"],
-      sla: ["service", "level", "agreement"],
-      ops: ["operations"],
-      hr: ["human", "resource"],
-      sap: ["s4hana", "sd"],
-      excel: ["advanced", "spreadsheet"],
-      crm: ["customer", "management"],
-      mis: ["reporting"],
-    };
+   const { data: appData, error: appError } = await supabase
+  .from("applications")
+  .insert([
+    {
+      candidate_name: user?.email?.split("@")[0],
+      candidate_email: user?.email,
+      job_id: selectedJob,
+      resume_url: resumeUrl,
+      score: matchData.score,
+      status: "Applied",
+    },
+  ])
+  .select();
+
 
     let matchCount = 0;
 
@@ -647,6 +651,8 @@ app.get("/api/candidates", async (req, res) => {
   //git test
   //git test
   //git test 
+  //git test
+  //git test
   //git test
   //git test
   //git test
