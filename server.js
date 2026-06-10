@@ -553,12 +553,22 @@ app.post("/api/match", async (req, res) => {
         );
 
     const resumeWords = new Set(clean(resumeText));
+const jdWords = clean(jobDesc);
+const uniqueJD = [...new Set(jdWords)];
 
-    const jdWords = clean(jobDesc);
+const synonyms = {
+  tat: ["turnaround", "time"],
+  sla: ["service", "level", "agreement"],
+  ops: ["operations"],
+  hr: ["human", "resource"],
+  sap: ["s4hana", "sd"],
+  excel: ["advanced", "spreadsheet"],
+  crm: ["customer", "management"],
+  mis: ["reporting"],
+};
 
-    const uniqueJD = [...new Set(jdWords)];
-
-   const { data: appData, error: appError } = await supabase
+let matchCount = 0;
+ /*const { data: appData, error: appError } = await supabase
   .from("applications")
   .insert([
     {
@@ -571,9 +581,7 @@ app.post("/api/match", async (req, res) => {
     },
   ])
   .select();
-
-
-    let matchCount = 0;
+*/
 
     uniqueJD.forEach((word) => {
       if (resumeWords.has(word)) {
@@ -656,4 +664,4 @@ app.get("/api/candidates", async (req, res) => {
   //git test
   //git test
   //git test
-  
+  //git test
