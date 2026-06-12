@@ -641,6 +641,21 @@ app.get("/api/candidates", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.get("/api/applications", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .order("score", { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // test change
 // test change
 
@@ -659,6 +674,7 @@ app.get("/api/candidates", async (req, res) => {
   //git test
   //git test
   //git test 
+  //git test
   //git test
   //git test
   //git test
