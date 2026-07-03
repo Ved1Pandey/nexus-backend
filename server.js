@@ -641,6 +641,59 @@ app.get("/api/candidates", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.post("/api/work-request", authMiddleware, async (req, res) => {
+  try {
+    const { type } = req.body;
+
+    const { error } = await supabase
+      .from("work_requests")
+      .insert({
+        employee_id: req.user.id,
+        type: type,
+      });
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/work-request", authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("work_requests")
+      .select("*, employees(name)")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.put("/api/work-request/:id", authMiddleware, async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    const { error } = await supabase
+      .from("work_requests")
+      .update({
+        status,
+        approved_by: req.user.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", req.params.id);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/applications", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -663,5 +716,6 @@ app.get("/api/applications", async (req, res) => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
+ //vedpandey
  //vedpandey
  //vedpandey
