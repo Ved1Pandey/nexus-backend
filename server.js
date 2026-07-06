@@ -713,6 +713,36 @@ app.get("/api/applications", async (req, res) => {
     });
   }
 });
+
+// ==============================
+// EMPLOYEE DIRECTORY
+// ==============================
+app.get("/api/employees", authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("employees")
+      .select(`
+        id,
+        name,
+        email,
+        role,
+        department,
+        joining_date,
+        cl,
+        sl,
+        pl
+      `)
+      .order("name", { ascending: true });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+});
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
