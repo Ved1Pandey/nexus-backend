@@ -145,7 +145,10 @@ if (empError || !emp) {
         },
       ]);
 
-      if (error) throw error;
+      if (error) {
+  console.log("SUPABASE ERROR:", error);
+  return res.status(500).json(error);
+}
 
       res.json({ success: true });
 
@@ -717,30 +720,97 @@ app.get("/api/applications", async (req, res) => {
 // ==============================
 // EMPLOYEE DIRECTORY
 // ==============================
+
 app.get("/api/employees", authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("employees")
-      .select(`
-        id,
-        name,
-        email,
-        role,
-        department,
-        joining_date,
-        cl,
-        sl,
-        pl
-      `)
-      .order("name", { ascending: true });
+      .select("*");
+
+    console.log("EMP DATA:", data);
+    console.log("EMP ERROR:", error);
 
     if (error) throw error;
 
     res.json(data);
   } catch (err) {
-    res.status(500).json({
-      error: err.message,
-    });
+    console.log("FULL ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==============================
+// ATTENDANCE REGULARIZATION
+// ==============================
+
+// Employee submits request
+app.post("/api/attendance-regularization", authMiddleware, async (req, res) => {
+  try {
+    const {
+      attendance_date,
+      new_punch_in,
+      new_punch_out,
+      reason,
+    } = req.body;
+
+    const { error } = await supabase
+      .from("attendance_regularization")
+      .insert({
+        employee_id: req.user.id,
+        attendance_date,
+        new_punch_in,
+        new_punch_out,
+        reason,
+      });
+
+    if (error) throw error;
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Employee history
+app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("attendance_regularization")
+      .select("*")
+      .eq("employee_id", req.user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manager approve/reject
+app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) => {
+  try {
+
+    const { status } = req.body;
+
+    const { error } = await supabase
+      .from("attendance_regularization")
+      .update({
+        status,
+        approved_by: req.user.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq("id", req.params.id);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
   app.listen(PORT, () => {
