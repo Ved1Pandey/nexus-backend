@@ -771,9 +771,9 @@ app.post("/api/attendance-regularization", authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+(
 // Employee history
-app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
+app.get("/api/attendance-regularization"), authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("attendance_regularization")
@@ -782,6 +782,35 @@ app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (error) throw error;
+
+    res.json(data);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manager / Team Lead - View Attendance Regularization Requests
+app.get("/api/team-attendance-regularization", authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("attendance_regularization")
+      .select(`
+        *,
+        employees!attendance_regularization_employee_id_fkey(
+          id,
+          name,
+          role
+        )
+      `)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.log(error);
+      throw error;
+    }
+
+    console.log("TEAM ATTENDANCE:", data);
 
     res.json(data);
 
