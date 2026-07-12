@@ -685,25 +685,12 @@ app.get("/api/applications", async (req, res) => {
 // ==============================
 // EMPLOYEE DIRECTORY
 // ==============================
+const employeeRoutes = require("./routes/employeeRoutes");
 
-app.get("/api/employees", authMiddleware, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*");
-
-    console.log("EMP DATA:", data);
-    console.log("EMP ERROR:", error);
-
-    if (error) throw error;
-
-    res.json(data);
-  } catch (err) {
-    console.log("FULL ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
+app.use(
+  "/api",
+  employeeRoutes(supabase, authMiddleware)
+);
 // ==============================
 // ATTENDANCE REGULARIZATION
 // ==============================
