@@ -25,15 +25,17 @@
   // ==============================
   // ROLE
   // ==============================
-  const normalizeRole = (role) => {
-    if (!role) return "Employee";
-    const r = role.toLowerCase();
+const normalizeRole = (role) => {
+  if (!role) return "Employee";
 
-    if (r.includes("manager")) return "Manager";
-    if (r.includes("lead")) return "Team Lead";
+  const r = String(role).toLowerCase().trim();
 
-    return "Employee";
-  };
+  if (r.includes("admin")) return "Admin";
+  if (r.includes("manager")) return "Manager";
+  if (r.includes("lead")) return "Team Lead";
+
+  return "Employee";
+};
 
   // ==============================
   // AUTH
@@ -791,33 +793,71 @@ app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
 
 
 // Manager / Team Lead - View Attendance Regularization Requests
-app.get("/api/team-attendance-regularization", authMiddleware, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("attendance_regularization")
-     .select(`
-  *,
-  employees (
-    id,
-    name,
-    role
-  )
-`)
-      .order("created_at", { ascending: false });
+app.get(
+  "/api/team-attendance-regularization",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      console.log("TEAM ATTENDANCE USER:", req.user);
 
-    if (error) {
-      console.log(error);
-      throw error;
+      // 1. Fetch requests WITHOUT Supabase relationship join
+      const { data: requests, error: requestError } = await supabase
+        .from("attendance_regularization")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (requestError) {
+        console.log("REQUEST ERROR:", requestError);
+        throw requestError;
+      }
+
+      if (!requests || requests.length === 0) {
+        return res.json([]);
+      }
+
+      // 2. Get employee IDs
+      const employeeIds = [
+        ...new Set(
+          requests
+            .map((request) => request.employee_id)
+            .filter(Boolean)
+        ),
+      ];
+
+      // 3. Fetch employees separately
+      const { data: employees, error: employeeError } = await supabase
+        .from("employees")
+        .select("id, name, role")
+        .in("id", employeeIds);
+
+      if (employeeError) {
+        console.log("EMPLOYEE ERROR:", employeeError);
+        throw employeeError;
+      }
+
+      // 4. Manually merge employee data
+      const result = requests.map((request) => ({
+        ...request,
+        employees:
+          employees?.find(
+            (employee) =>
+              Number(employee.id) === Number(request.employee_id)
+          ) || null,
+      }));
+
+      console.log("TEAM ATTENDANCE RESULT:", result);
+
+      return res.json(result);
+    } catch (err) {
+      console.log("TEAM ATTENDANCE FULL ERROR:", err);
+
+      return res.status(500).json({
+        error: err.message,
+      });
     }
-
-    console.log("TEAM ATTENDANCE:", data);
-
-    res.json(data);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
-});
+);
+
 
 // Manager approve/reject
 app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) => {
