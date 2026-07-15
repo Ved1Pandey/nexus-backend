@@ -595,10 +595,56 @@ app.get(
 
 
 // Manager approve/reject
+
 app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) => {
   try {
-
     const { status } = req.body;
+
+    const { data: request, error: requestError } = await supabase
+      .from("attendance_regularization")
+      .select("*")
+      .eq("id", req.params.id)
+      .single();
+
+    if (requestError) throw requestError;
+
+    if (status === "APPROVED") {
+      const start = `${request.attendance_date}T00:00:00.000Z`;
+      const end = `${request.attendance_date}T23:59:59.999Z`;
+
+      const { data: attendance, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("employee_id", request.employee_id)
+        .gte("punch_in", start)
+        .lte("punch_in", end)
+        .order("punch_in", { ascending: true })
+        .limit(1);
+
+      if (attendanceError) throw attendanceError;
+
+      if (attendance?.length) {
+        const { error: updateAttendanceError } = await supabase
+          .from("attendance")
+          .update({
+            punch_in: request.new_punch_in,
+            punch_out: request.new_punch_out,
+          })
+          .eq("id", attendance[0].id);
+
+        if (updateAttendanceError) throw updateAttendanceError;
+      } else {
+        const { error: insertAttendanceError } = await supabase
+          .from("attendance")
+          .insert({
+            employee_id: request.employee_id,
+            punch_in: request.new_punch_in,
+            punch_out: request.new_punch_out,
+          });
+
+        if (insertAttendanceError) throw insertAttendanceError;
+      }
+    }
 
     const { error } = await supabase
       .from("attendance_regularization")
@@ -614,6 +660,7 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
     res.json({ success: true });
 
   } catch (err) {
+    console.log("REGULARIZATION ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
