@@ -668,4 +668,3 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
  //vedpandey
- //vedpandey
