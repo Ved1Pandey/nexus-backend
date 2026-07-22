@@ -9,7 +9,17 @@
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
   const upload = multer({ dest: "uploads/" });
-  
+  const nodemailer = require("nodemailer");
+
+  // Configure nodemailer
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -65,7 +75,13 @@ const normalizeRole = (role) => {
 
 app.use(
   "/api",
-  authRoutes(supabase, jwt, JWT_SECRET, normalizeRole)
+  authRoutes(
+  supabase,
+  jwt,
+  JWT_SECRET,
+  normalizeRole,
+  transporter
+)
 );
 
   // ==============================
