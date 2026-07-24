@@ -12,7 +12,7 @@
   const nodemailer = require("nodemailer");
 
   // Configure nodemailer
-  const transporter = nodemailer.createTransport({
+  const transport = nodemailer.createTransport({ 
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
@@ -80,7 +80,7 @@ app.use(
   jwt,
   JWT_SECRET,
   normalizeRole,
-  transporter
+  transport
 )
 );
 
