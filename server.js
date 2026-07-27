@@ -1,4 +1,6 @@
-  require("dotenv").config();
+
+process.env.TZ = "Asia/Kolkata";
+require("dotenv").config();
 
   const express = require("express");
   const app = express();
@@ -681,6 +683,8 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
   }
 });
   app.listen(PORT, () => {
+    console.log("Server Time:", new Date());
+console.log("ISO Time:", new Date().toISOString());
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
  //vedpandey

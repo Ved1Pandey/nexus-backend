@@ -66,9 +66,9 @@ router.post("/forgot-password", async (req, res) => {
     const { email } = req.body;
 
     const { data: user, error } = await supabase
-      .from("employees")
+      .from("Email")
       .select("*")
-      .eq("email", email)
+      .eq("email", email.toLowerCase().trim())
       .single();
 
     if (error || !user) {
@@ -80,17 +80,31 @@ router.post("/forgot-password", async (req, res) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    await supabase
-      .from("employees")
-      .update({
-        reset_otp: otp,
-        otp_expiry: new Date(Date.now() + 10 * 60 * 1000).toISOString()
-      })
-      .eq("id", user.id);
+console.log("Generated OTP:", otp);
+console.log("Sending OTP:", otp);
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
+const { error: updateError } = await supabase
+  .from("Email")
+  .update({
+    reset_otp: otp,
+    otp_expiry: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  })
+  .eq("id", user.id);
+const { data: checkUser, error: checkError } = await supabase
+  .from("Email")
+  .select("reset_otp, otp_expiry")
+  .eq("id", user.id)
+  .single();
+
+console.log("Check Error:", checkError);
+console.log("DB After Update:", checkUser);
+
+console.log("User ID:", user.id);
+console.log("Update Error:", updateError);
+console.log("Mail OTP:", otp);
+
+await transporter.sendMail({      from: process.env.EMAIL_USER,
+      to: user.email,
       subject: "NexusHR Password Reset OTP",
       html: `
         <h2>Password Reset</h2>
@@ -120,7 +134,7 @@ router.post("/verify-otp", async (req, res) => {
     const { email, otp } = req.body;
 
     const { data: user, error } = await supabase
-      .from("employees")
+      .from("Email")
       .select("*")
       .eq("email", email)
       .single();
@@ -128,14 +142,28 @@ router.post("/verify-otp", async (req, res) => {
     if (error || !user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
-    if (user.reset_otp !== otp) {
+console.log("Entered OTP:", otp);
+console.log("DB OTP:", user.reset_otp);
+console.log("OTP Type:", typeof otp);
+console.log("DB Type:", typeof user.reset_otp);
+    if (String(user.reset_otp) !== String(otp)) {
       return res.status(400).json({ success: false, message: "Invalid OTP" });
     }
+const expiry = new Date(user.otp_expiry);
+const now = new Date();
 
-    if (new Date(user.otp_expiry) < new Date()) {
-      return res.status(400).json({ success: false, message: "OTP expired" });
-    }
+console.log("Expiry Date:", expiry);
+console.log("Now Date:", now);
+console.log("Expiry ms:", expiry.getTime());
+console.log("Now ms:", now.getTime());
+console.log("Expired:", expiry.getTime() < now.getTime());
+
+if (expiry.getTime() < now.getTime()) {
+  return res.status(400).json({
+    success: false,
+    message: "OTP expired",
+  });
+}
 
     res.json({
       success: true,
@@ -157,7 +185,7 @@ router.post("/reset-password", async (req, res) => {
     const { email, password } = req.body;
 
     const { error } = await supabase
-      .from("employees")
+      .from("Email")
       .update({
         password: password,
         reset_otp: null,
