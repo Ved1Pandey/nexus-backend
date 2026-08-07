@@ -887,3 +887,4 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
   });
  //vedpandey
  //vedpandey
+ //vedpandey
