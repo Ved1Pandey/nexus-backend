@@ -8,6 +8,7 @@
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
+  const nodemailer = require("nodemailer");
   const upload = multer({ dest: "uploads/" });
   
   app.use(cors());
@@ -880,6 +881,183 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
 
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+// ==============================
+// FORGOT PASSWORD / OTP
+// ==============================
+
+const otpStore = new Map();
+
+const mailTransporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
+
+// SEND OTP
+app.post("/api/forgot-password", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").toLowerCase().trim();
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    const { data: users, error } = await supabase
+      .from("Email")
+      .select("id, email")
+      .eq("email", email);
+
+    if (error) {
+      console.log("FORGOT PASSWORD SUPABASE ERROR:", error);
+      return res.status(500).json({
+        message: "Server error",
+      });
+    }
+
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        message: "Email not found",
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    otpStore.set(email, {
+      otp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    await mailTransporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: "NexusHR - Password Reset OTP",
+      text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
+    });
+
+    console.log(`OTP sent to ${email}`);
+
+    res.json({
+      message: "OTP sent successfully",
+    });
+
+  } catch (err) {
+    console.log("SEND OTP ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to send OTP",
+    });
+  }
+});
+
+
+// VERIFY OTP
+app.post("/api/verify-otp", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").toLowerCase().trim();
+    const otp = String(req.body.otp || "").trim();
+
+    const saved = otpStore.get(email);
+
+    if (!saved) {
+      return res.status(400).json({
+        message: "OTP expired or not found",
+      });
+    }
+
+    if (Date.now() > saved.expiresAt) {
+      otpStore.delete(email);
+
+      return res.status(400).json({
+        message: "OTP expired",
+      });
+    }
+
+    if (saved.otp !== otp) {
+      return res.status(400).json({
+        message: "Invalid OTP",
+      });
+    }
+
+    otpStore.set(email, {
+      ...saved,
+      verified: true,
+    });
+
+    res.json({
+      message: "OTP verified successfully",
+    });
+
+  } catch (err) {
+    console.log("VERIFY OTP ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to verify OTP",
+    });
+  }
+});
+
+
+// RESET PASSWORD
+app.post("/api/reset-password", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").toLowerCase().trim();
+    const password = String(req.body.password || "");
+
+    const saved = otpStore.get(email);
+
+    if (!saved || !saved.verified) {
+      return res.status(400).json({
+        message: "Please verify OTP first",
+      });
+    }
+
+    if (Date.now() > saved.expiresAt) {
+      otpStore.delete(email);
+
+      return res.status(400).json({
+        message: "OTP session expired",
+      });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const { error } = await supabase
+      .from("Email")
+      .update({
+        password: password,
+      })
+      .eq("email", email);
+
+    if (error) {
+      console.log("RESET PASSWORD SUPABASE ERROR:", error);
+
+      return res.status(500).json({
+        message: "Failed to reset password",
+      });
+    }
+
+    otpStore.delete(email);
+
+    res.json({
+      message: "Password reset successfully",
+    });
+
+  } catch (err) {
+    console.log("RESET PASSWORD ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to reset password",
+    });
   }
 });
   app.listen(PORT, () => {
