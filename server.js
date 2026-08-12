@@ -946,13 +946,6 @@ res.json({
     message: "OTP sent successfully",
 });
 
-
-    console.log(`OTP sent to ${email}`);
-
-    res.json({
-      message: "OTP sent successfully",
-    });
-
   } catch (err) {
     console.log("SEND OTP ERROR:", err);
 
