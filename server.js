@@ -8,7 +8,6 @@
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
-  const nodemailer = require("nodemailer");
   const upload = multer({ dest: "uploads/" });
   
   app.use(cors());
@@ -889,13 +888,9 @@ app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) =
 
 const otpStore = new Map();
 
-const mailTransporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-});
+const { Resend } = require("resend");
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // SEND OTP
 app.post("/api/forgot-password", async (req, res) => {
@@ -932,13 +927,17 @@ app.post("/api/forgot-password", async (req, res) => {
       otp,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
+const { data, error } = await resend.emails.send({
+  from: process.env.RESEND_FROM_EMAIL,
+  to: email,
+  subject: "NexusHR - Password Reset OTP",
+  text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
+});
 
-    await mailTransporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: email,
-      subject: "NexusHR - Password Reset OTP",
-      text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
-    });
+if (error) {
+  console.log("RESEND ERROR:", error);
+  throw new Error(error.message || "Failed to send email");
+}
 
     console.log(`OTP sent to ${email}`);
 
@@ -1052,7 +1051,7 @@ app.post("/api/reset-password", async (req, res) => {
       message: "Password reset successfully",
     });
 
-  } catch (err) {
+  } catch (err) {node
     console.log("RESET PASSWORD ERROR:", err);
 
     res.status(500).json({
