@@ -928,11 +928,11 @@ app.post("/api/forgot-password", async (req, res) => {
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
 
-const { data: resendData, error: resendError } = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL,
-    to: email,
-    subject: "NexusHR - Password Reset OTP",
-    text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
+const { data, error: resendError } = await resend.emails.send({
+  from: "NexusHR <onboarding@resend.dev>",
+  to: [email],
+  subject: "NexusHR - Password Reset OTP",
+  text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`
 });
 
 if (resendError) {
