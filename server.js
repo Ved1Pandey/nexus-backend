@@ -15,8 +15,7 @@
   app.use(express.urlencoded({ extended: true }));
 
   const PORT = 3001;
-  const JWT_SECRET = process.env.JWT_SECRET || "secret123";
-
+  const JWT_SECRET = process.env.JWT_SECRET;
   const supabase = createClient(
     "https://odswgsvccutgwwnoappf.supabase.co",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9kc3dnc3ZjY3V0Z3d3bm9hcHBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NDM5NzIsImV4cCI6MjA4NzMxOTk3Mn0.4wNjBNqIqK4HUvWFu0Z5GejpvLsqTeLrXZwBbpuCtkg"
