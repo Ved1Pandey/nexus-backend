@@ -5,7 +5,7 @@
   const cors = require("cors");
   const jwt = require("jsonwebtoken");
   const { createClient } = require("@supabase/supabase-js");
-  const authRoutes = require("./authRoutes");
+  const authRoutes = require("./routes/authRoutes");
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
