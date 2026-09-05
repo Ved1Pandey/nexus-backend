@@ -16,10 +16,10 @@
   app.use(express.urlencoded({ extended: true }));
   app.use("/api/auth", authRoutes);
 
-  const PORT = 3001;
+  const PORT = process.env.PORT || 3001;
   const JWT_SECRET = process.env.JWT_SECRET;
   const supabase = createClient(
-    "https://odswgsvccutgwwnoappf.supabase.co",
+    process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_KEY);
 
   // ==============================
@@ -1060,6 +1060,11 @@ app.post("/api/reset-password", async (req, res) => {
     });
   }
 });
+
+  app.get("/health", (req, res) => {
+    res.json({ ok: true });
+  });
+
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
