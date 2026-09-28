@@ -4,23 +4,88 @@
   const app = express();
   const cors = require("cors");
   const jwt = require("jsonwebtoken");
+  const bcrypt = require("bcrypt");
   const { createClient } = require("@supabase/supabase-js");
   const authRoutes = require("./routes/authRoutes");
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
-  const upload = multer({ dest: "uploads/" });
+  const path = require("path");
+  const MAX_RESUME_BYTES = 5 * 1024 * 1024;
+  const upload = multer({
+    dest: "uploads/",
+    limits: { fileSize: MAX_RESUME_BYTES },
+    fileFilter: (req, file, cb) => {
+      const original = String(file.originalname || "").toLowerCase();
+      const mime = String(file.mimetype || "").toLowerCase();
+      if (mime === "application/pdf" && original.endsWith(".pdf")) {
+        return cb(null, true);
+      }
+      return cb(new Error("Only PDF files are allowed"));
+    },
+  });
+
+  const cleanupMulterFile = (file) => {
+    if (!file || !file.path) return;
+    try {
+      fs.unlinkSync(file.path);
+    } catch {
+    }
+  };
+
+  const safeResumeFilename = (originalname) => {
+    const base = path.basename(String(originalname || "resume.pdf"));
+    const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, "_");
+    if (!cleaned.toLowerCase().endsWith(".pdf")) {
+      return "resume.pdf";
+    }
+    return cleaned.slice(0, 120);
+  };
   
-  app.use(cors());
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin) {
+          return callback(null, true);
+        }
+        const allowedOrigins = [
+          "https://nexushr-5g11.onrender.com",
+          "http://localhost:5173",
+          "http://localhost:4173",
+        ];
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      },
+      credentials: false,
+    })
+  );
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use("/api/auth", authRoutes);
 
   const PORT = process.env.PORT || 3001;
   const JWT_SECRET = process.env.JWT_SECRET;
-  const supabase = createClient(
+  const supabaseAdmin = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_KEY);
+
+  async function findEmailForLogin(normalizedEmail) {
+    return supabaseAdmin
+      .from("Email")
+      .select("id, email, password")
+      .eq("email", normalizedEmail);
+  }
+
+  async function updateEmailPassword(normalizedEmail, hashedPassword) {
+    return supabaseAdmin
+      .from("Email")
+      .update({
+        password: hashedPassword,
+      })
+      .eq("email", normalizedEmail);
+  }
 
   // ==============================
   // ROLE
@@ -58,6 +123,16 @@ const normalizeRole = (role) => {
     }
   };
 
+  const APPROVER_ROLES = ["Admin", "Manager", "Team Lead"];
+
+  const requireApproverRole = (req, res, next) => {
+    const role = req.user && req.user.role;
+    if (!APPROVER_ROLES.includes(role)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    next();
+  };
+
   // ==============================
   // LOGIN
   // ==============================
@@ -65,10 +140,9 @@ const normalizeRole = (role) => {
     try {
       const { email, password } = req.body;
 
-      const { data: users } = await supabase
-        .from("Email")
-        .select("*")
-        .eq("email", email.toLowerCase().trim());
+      const { data: users } = await findEmailForLogin(
+        email.toLowerCase().trim()
+      );
 
       if (!users?.length) {
         return res.status(401).json({ error: "User not found" });
@@ -76,13 +150,23 @@ const normalizeRole = (role) => {
 
       const user = users[0];
 
-      if (String(user.password).trim() !== String(password).trim()) {
+      let passwordOk = false;
+      try {
+        passwordOk = await bcrypt.compare(
+          String(password).trim(),
+          user.password
+        );
+      } catch {
+        passwordOk = false;
+      }
+
+      if (!passwordOk) {
         return res.status(401).json({ error: "Wrong password" });
       }
 
-      const { data: emp, error: empError } = await supabase
+      const { data: emp, error: empError } = await supabaseAdmin
   .from("employees")
-  .select("*")
+  .select("id, name, role")
   .eq("id", user.id)
   .single();
 
@@ -120,7 +204,7 @@ if (empError || !emp) {
         return res.status(400).json({ error: "Invalid date range" });
       }
 
-      const { data: existing } = await supabase
+      const { data: existing } = await supabaseAdmin
         .from("leaves")
         .select("from_date, to_date")
         .eq("employee_id", req.user.id);
@@ -136,7 +220,7 @@ if (empError || !emp) {
         return res.status(400).json({ error: "Leave overlap ❌" });
       }
 
-      const { error } = await supabase.from("leaves").insert([
+      const { error } = await supabaseAdmin.from("leaves").insert([
         {
           employee_id: req.user.id,
           from_date,
@@ -148,7 +232,6 @@ if (empError || !emp) {
       ]);
 
       if (error) {
-  console.log("SUPABASE ERROR:", error);
   return res.status(500).json(error);
 }
 
@@ -164,7 +247,7 @@ if (empError || !emp) {
   // ==============================
 app.get("/api/leaves", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("leaves")
       .select("*")
       .eq("employee_id", req.user.id)
@@ -181,7 +264,7 @@ app.get("/api/leaves", authMiddleware, async (req, res) => {
   // ==============================
   // GET LEAVES (Team)
   // ==============================
- app.get("/api/team-leaves", async (req, res) => {
+ app.get("/api/team-leaves", authMiddleware, requireApproverRole, async (req, res) => {
   try {
     const userId = 8; // temporary
 const role = "Team Lead"; //
@@ -190,23 +273,21 @@ let employeeIds = [];
 
 // ✅ TEAM LEAD → only his team
 if (role === "Team Lead") {
-  const { data: team } = await supabase
+  const { data: team } = await supabaseAdmin
     .from("employees")
     .select("id")
    // .eq("manager_id", userId);// temporary disable
 
   employeeIds = team.map(e => e.id)
-console.log("EMPLOYEE IDS (TL):", employeeIds);
 }
 // ✅ MANAGER → all except self
 else if (role === "Manager") {
-  const { data: all } = await supabase
+  const { data: all } = await supabaseAdmin
     .from("employees")
     .select("id")
     .neq("id", userId);
 
   employeeIds = all.map(e => e.id)
-console.log("EMPLOYEE IDS (Manager):", employeeIds);
 }
 
 // ❌ no team
@@ -215,7 +296,7 @@ if (!employeeIds.length) {
 }
 
 // ✅ fetch leaves
-const { data, error } = await supabase
+const { data, error } = await supabaseAdmin
   .from("leaves")
   .select("*, employees(name, role)")
   //.in("employee_id", employeeIds)
@@ -235,7 +316,7 @@ res.json(data);
   // ==============================
   app.get("/api/leave-balance", authMiddleware, async (req, res) => {
     try {
-    const { data } = await supabase
+    const { data } = await supabaseAdmin
   .from("employees")
   .select("cl, sl, pl")
   .eq("id", req.user.id)
@@ -259,7 +340,7 @@ res.json({
   // ✅ GET ATTENDANCE (NEW - REQUIRED)
   app.get("/api/attendance", authMiddleware, async (req, res) => {
     try {
-      const { data } = await supabase
+      const { data } = await supabaseAdmin
         .from("attendance")
         .select("*")
         .eq("employee_id", req.user.id)
@@ -284,7 +365,7 @@ res.json({
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const { data: existing } = await supabase
+      const { data: existing } = await supabaseAdmin
         .from("attendance")
         .select("*")
         .eq("employee_id", req.user.id)
@@ -295,7 +376,7 @@ res.json({
         return res.status(400).json({ error: "Already punched in ❌" });
       }
 
-      await supabase.from("attendance").insert([
+      await supabaseAdmin.from("attendance").insert([
         {
           employee_id: req.user.id,
           punch_in: new Date().toISOString(),
@@ -317,7 +398,7 @@ res.json({
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      const { data: records } = await supabase
+      const { data: records } = await supabaseAdmin
         .from("attendance")
         .select("*")
         .eq("employee_id", req.user.id)
@@ -328,7 +409,7 @@ res.json({
         return res.status(400).json({ error: "No punch-in found ❌" });
       }
 
-      await supabase
+      await supabaseAdmin
         .from("attendance")
         .update({ punch_out: new Date().toISOString() })
         .eq("id", records[0].id);
@@ -342,32 +423,26 @@ res.json({
 
   // UPDATE LEAVE STATUS (Manager)
   // ==============================
-app.put("/api/leaves/:id", authMiddleware, async (req, res) => {
+app.put("/api/leaves/:id", authMiddleware, requireApproverRole, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  console.log("STATUS:", status);
 
   try {
     // 1. get leave data
-    const { data: leave } = await supabase
+    const { data: leave } = await supabaseAdmin
       .from("leaves")
       .select("*")
       .eq("id", id)
       .single();
-
-console.log("OLD STATUS:",
-leave?.status)
 
     if (!leave) {
       return res.status(404).json({ error: "Leave not found" });
     }
 
     // 2. ONLY IF APPROVED → deduct balance
- console.log("STATUS:", status);
-console.log("OLD STATUS:", leave.status);
+
 
 if (status === "APPROVED" && leave.status !=="APPROVED") {
-  console.log("ENTERED APPROVED BLOCK");
 
   const days =
   Math.ceil(
@@ -380,22 +455,18 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
   else if (leave.type === "SL") column = "sl";
   else column = "pl";
 
-  console.log("COLUMN:", column);
-  console.log("DAYS:", days);
 
-  const { data: emp } = await supabase
+  const { data: emp } = await supabaseAdmin
     .from("employees")
     .select("cl, sl, pl")
     .eq("id", leave.employee_id)
     .single();
 
-  console.log("EMP:", emp);
 
   const newBalance = Math.max((emp[column] || 0) - days, 0);
 
-  console.log("NEW BALANCE:", newBalance);
 
-  await supabase
+  await supabaseAdmin
     .from("employees")
     .update({ [column]: newBalance })
     .eq("id", leave.employee_id);
@@ -403,7 +474,7 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
 
 
     // 3. update leave status (LAST में)
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("leaves")
       .update({ status })
       .eq("id", id)
@@ -421,12 +492,20 @@ if (status === "APPROVED" && leave.status !=="APPROVED") {
 // ==============================
 // ATS - RESUME UPLOAD
 // ==============================
-app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
+app.post("/api/upload-resume", authMiddleware, (req, res, next) => {
+  upload.single("resume")(req, res, (err) => {
+    if (err) {
+      cleanupMulterFile(req.file);
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ error: "File too large" });
+      }
+      return res.status(400).json({ error: err.message || "Invalid file" });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const email = req.body.email;
-    console.log("EMAIL:", email);
-    console.log("REQ BODY:", req.body);
-
 
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
@@ -438,33 +517,27 @@ app.post("/api/upload-resume", upload.single("resume"), async (req, res) => {
   const pdfData = await pdfParse(dataBuffer);
 const text = pdfData.text;
 
-console.log("PDF TEXT LENGTH:", text?.length);
-const fileName = `${Date.now()}-${req.file.originalname}`;
+const objectPath = `${req.user.id}/${Date.now()}-${safeResumeFilename(req.file.originalname)}`;
 
 const fileBuffer = fs.readFileSync(filePath);
 
-const { data: storageData, error: storageError } =
-  await supabase.storage
+const { error: storageError } =
+  await supabaseAdmin.storage
     .from("resumes")
-    .upload(fileName, fileBuffer, {
+    .upload(objectPath, fileBuffer, {
       contentType: "application/pdf",
     });
 
 if (storageError) {
-  console.log("STORAGE ERROR:", storageError);
+  cleanupMulterFile(req.file);
+  return res.status(500).json({
+    error: storageError.message || "Resume storage upload failed",
+  });
 }
 
-const { data: publicData } = supabase.storage
-  .from("resumes")
-  .getPublicUrl(fileName);
+cleanupMulterFile(req.file);
 
-const publicUrl = publicData.publicUrl;
-
-console.log("PUBLIC URL:", publicUrl);
-
-fs.unlinkSync(filePath);
-
-const { data, error } = await supabase
+const { data, error } = await supabaseAdmin
   .from("candidates")
   .upsert(
     [
@@ -479,8 +552,6 @@ const { data, error } = await supabase
   )
   .select();
 
-console.log("SUPABASE DATA:", data);
-console.log("SUPABASE ERROR:", error);
 
 if (error) {
   return res.status(500).json({ error: error.message });
@@ -490,46 +561,54 @@ if (!data || !data.length) {
   return res.status(500).json({ error: "No candidate returned" });
 }
 
-if (error) {
-  console.log("SUPABASE ERROR:", error);
-  return res.status(500).json({
-    error: error.message
-  });
-}
-
-if (!data || !data.length) {
-  return res.status(500).json({
-    error: "No candidate returned"
-  });
-}
-
 return res.json({
   text,
   candidateId: data[0].id,
-  publicUrl,
+  publicUrl: objectPath,
+  path: objectPath,
 });
 
 
   } catch (err) {
+    cleanupMulterFile(req.file);
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get("/api/resumes/*", authMiddleware, requireApproverRole, async (req, res) => {
+  try {
+    const objectPath = String(req.params[0] || "").replace(/^\/+/, "");
+    if (!objectPath || objectPath.includes("..")) {
+      return res.status(400).json({ error: "Invalid resume path" });
+    }
+
+    const { data, error } = await supabaseAdmin.storage
+      .from("resumes")
+      .createSignedUrl(objectPath, 300);
+
+    if (error || !data || !data.signedUrl) {
+      return res.status(500).json({
+        error: (error && error.message) || "Failed to create signed URL",
+      });
+    }
+
+    return res.json({ url: data.signedUrl });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ==============================
 // ATS - MATCH SCORE
 // ==============================
-app.post("/api/match", async (req, res) => {
+app.post("/api/match", authMiddleware, async (req, res) => {
   try {
-    console.log("BODY:", req.body);
 
     const {
       text: resumeText = "",
       jobDesc = "",
       candidateId
     } = req.body || {};
-    console.log("REQ BODY:", req.body);
-    console.log("RESUME TEXT:", resumeText?.length);
-    console.log("JOB DESC:", jobDesc);
-    console.log("CANDIDATE:", candidateId);
 
     if (!candidateId) {
       return res.status(400).json({
@@ -573,7 +652,7 @@ const synonyms = {
 };
 
 let matchCount = 0;
- /*const { data: appData, error: appError } = await supabase
+ /*const { data: appData, error: appError } = await supabaseAdmin
   .from("applications")
   .insert([
     {
@@ -607,7 +686,7 @@ let matchCount = 0;
         ).toFixed(2)
       : "0.00";
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
     .from("candidates")
     .update({
     score: Number(score)
@@ -615,8 +694,6 @@ let matchCount = 0;
     .eq("id", Number(candidateId))
     .select();
 
-    console.log("UPDATED:", data);
-    console.log("UPDATE ERROR:", error);
 
     if (error) {
       return res.status(500).json({
@@ -632,9 +709,9 @@ let matchCount = 0;
     });
   }
 });
-app.get("/api/candidates", async (req, res) => {
+app.get("/api/candidates", authMiddleware, requireApproverRole, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("candidates")
       .select("*")
       .order("score", { ascending: false });
@@ -650,7 +727,7 @@ app.post("/api/work-request", authMiddleware, async (req, res) => {
   try {
     const { type } = req.body;
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from("work_requests")
       .insert({
         employee_id: req.user.id,
@@ -666,7 +743,7 @@ app.post("/api/work-request", authMiddleware, async (req, res) => {
 });
 app.get("/api/work-request", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("work_requests")
       .select("*, employees(name)")
       .order("created_at", { ascending: false });
@@ -678,18 +755,28 @@ app.get("/api/work-request", authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-app.put("/api/work-request/:id", authMiddleware, async (req, res) => {
+app.put("/api/work-request/:id", authMiddleware, requireApproverRole, async (req, res) => {
   try {
     const { status } = req.body;
 
-    const { error } = await supabase
+    const { data: existing, error: loadError } = await supabaseAdmin
+      .from("work_requests")
+      .select("id, employee_id")
+      .eq("id", req.params.id)
+      .single();
+
+    if (loadError || !existing) {
+      return res.status(404).json({ error: "Work request not found" });
+    }
+
+    const { error } = await supabaseAdmin
       .from("work_requests")
       .update({
         status,
         approved_by: req.user.id,
         approved_at: new Date().toISOString(),
       })
-      .eq("id", req.params.id);
+      .eq("id", existing.id);
 
     if (error) throw error;
 
@@ -699,9 +786,9 @@ app.put("/api/work-request/:id", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/applications", async (req, res) => {
+app.get("/api/applications", authMiddleware, requireApproverRole, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("applications")
       .select(`
         *,
@@ -725,18 +812,15 @@ app.get("/api/applications", async (req, res) => {
 
 app.get("/api/employees", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("employees")
       .select("*");
 
-    console.log("EMP DATA:", data);
-    console.log("EMP ERROR:", error);
 
     if (error) throw error;
 
     res.json(data);
   } catch (err) {
-    console.log("FULL ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -755,7 +839,7 @@ app.post("/api/attendance-regularization", authMiddleware, async (req, res) => {
       reason,
     } = req.body;
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from("attendance_regularization")
       .insert({
         employee_id: req.user.id,
@@ -777,7 +861,7 @@ app.post("/api/attendance-regularization", authMiddleware, async (req, res) => {
 // Employee history
 app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("attendance_regularization")
       .select("*")
       .eq("employee_id", req.user.id)
@@ -796,18 +880,17 @@ app.get("/api/attendance-regularization", authMiddleware, async (req, res) => {
 app.get(
   "/api/team-attendance-regularization",
   authMiddleware,
+  requireApproverRole,
   async (req, res) => {
     try {
-      console.log("TEAM ATTENDANCE USER:", req.user);
 
       // 1. Fetch requests WITHOUT Supabase relationship join
-      const { data: requests, error: requestError } = await supabase
+      const { data: requests, error: requestError } = await supabaseAdmin
         .from("attendance_regularization")
         .select("*")
         .order("created_at", { ascending: false });
 
       if (requestError) {
-        console.log("REQUEST ERROR:", requestError);
         throw requestError;
       }
 
@@ -825,13 +908,12 @@ app.get(
       ];
 
       // 3. Fetch employees separately
-      const { data: employees, error: employeeError } = await supabase
+      const { data: employees, error: employeeError } = await supabaseAdmin
         .from("employees")
         .select("id, name, role")
         .in("id", employeeIds);
 
       if (employeeError) {
-        console.log("EMPLOYEE ERROR:", employeeError);
         throw employeeError;
       }
 
@@ -845,11 +927,9 @@ app.get(
           ) || null,
       }));
 
-      console.log("TEAM ATTENDANCE RESULT:", result);
 
       return res.json(result);
     } catch (err) {
-      console.log("TEAM ATTENDANCE FULL ERROR:", err);
 
       return res.status(500).json({
         error: err.message,
@@ -860,19 +940,29 @@ app.get(
 
 
 // Manager approve/reject
-app.put("/api/attendance-regularization/:id", authMiddleware, async (req, res) => {
+app.put("/api/attendance-regularization/:id", authMiddleware, requireApproverRole, async (req, res) => {
   try {
 
     const { status } = req.body;
 
-    const { error } = await supabase
+    const { data: existing, error: loadError } = await supabaseAdmin
+      .from("attendance_regularization")
+      .select("id, employee_id")
+      .eq("id", req.params.id)
+      .single();
+
+    if (loadError || !existing) {
+      return res.status(404).json({ error: "Attendance regularization not found" });
+    }
+
+    const { error } = await supabaseAdmin
       .from("attendance_regularization")
       .update({
         status,
         approved_by: req.user.id,
         approved_at: new Date().toISOString(),
       })
-      .eq("id", req.params.id);
+      .eq("id", existing.id);
 
     if (error) throw error;
 
@@ -903,13 +993,12 @@ app.post("/api/forgot-password", async (req, res) => {
       });
     }
 
-    const { data: users, error } = await supabase
+    const { data: users, error } = await supabaseAdmin
       .from("Email")
       .select("id, email")
       .eq("email", email);
 
     if (error) {
-      console.log("FORGOT PASSWORD SUPABASE ERROR:", error);
       return res.status(500).json({
         message: "Server error",
       });
@@ -936,18 +1025,15 @@ const { data, error: resendError } = await resend.emails.send({
 });
 
 if (resendError) {
-    console.log("RESEND ERROR:", resendError);
     throw new Error(resendError.message || "Failed to send email");
 }
 
-console.log(`OTP sent to ${email}`);
 
 res.json({
     message: "OTP sent successfully",
 });
 
   } catch (err) {
-    console.log("SEND OTP ERROR:", err);
 
     res.status(500).json({
       message: "Failed to send OTP",
@@ -994,7 +1080,6 @@ app.post("/api/verify-otp", async (req, res) => {
     });
 
   } catch (err) {
-    console.log("VERIFY OTP ERROR:", err);
 
     res.status(500).json({
       message: "Failed to verify OTP",
@@ -1031,15 +1116,11 @@ app.post("/api/reset-password", async (req, res) => {
       });
     }
 
-    const { error } = await supabase
-      .from("Email")
-      .update({
-        password: password,
-      })
-      .eq("email", email);
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const { error } = await updateEmailPassword(email, hashedPassword);
 
     if (error) {
-      console.log("RESET PASSWORD SUPABASE ERROR:", error);
 
       return res.status(500).json({
         message: "Failed to reset password",
@@ -1052,8 +1133,7 @@ app.post("/api/reset-password", async (req, res) => {
       message: "Password reset successfully",
     });
 
-  } catch (err) {node
-    console.log("RESET PASSWORD ERROR:", err);
+  } catch (err) {
 
     res.status(500).json({
       message: "Failed to reset password",

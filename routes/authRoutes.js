@@ -1,4 +1,5 @@
 const express = require("express");
+const bcrypt = require("bcrypt");
 
 module.exports = (
   supabase,
@@ -10,8 +11,6 @@ module.exports = (
   const router = express.Router();
 
   router.post("/login", async (req, res) => {
-  console.log("LOGIN HIT");
-  console.log(req.body);
     try {
       const { email, password } = req.body;
 
@@ -27,7 +26,17 @@ module.exports = (
 
       const user = users[0];
 
-      if (String(user.password).trim() !== String(password).trim()) {
+      let passwordOk = false;
+      try {
+        passwordOk = await bcrypt.compare(
+          String(password).trim(),
+          user.password
+        );
+      } catch {
+        passwordOk = false;
+      }
+
+      if (!passwordOk) {
         return res.status(401).json({ error: "Wrong password" });
       }
 
@@ -187,10 +196,12 @@ router.post("/reset-password", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
     const { error } = await supabase
       .from("Email")
       .update({
-        password: password,
+        password: hashedPassword,
         reset_otp: null,
         otp_expiry: null
       })
