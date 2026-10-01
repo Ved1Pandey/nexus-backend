@@ -87,6 +87,14 @@
       .eq("email", normalizedEmail);
   }
 
+  async function findEmailAddressForUserId(userId) {
+    return supabaseAdmin
+      .from("Email")
+      .select("email")
+      .eq("id", userId)
+      .maybeSingle();
+  }
+
   // ==============================
   // ROLE
   // ==============================
@@ -266,46 +274,47 @@ app.get("/api/leaves", authMiddleware, async (req, res) => {
   // ==============================
  app.get("/api/team-leaves", authMiddleware, requireApproverRole, async (req, res) => {
   try {
-    const userId = 8; // temporary
-const role = "Team Lead"; //
+    const userId = req.user.id;
+    const role = req.user.role;
 
-let employeeIds = [];
+    let employeeIds = [];
 
-// ✅ TEAM LEAD → only his team
-if (role === "Team Lead") {
-  const { data: team } = await supabaseAdmin
-    .from("employees")
-    .select("id")
-   // .eq("manager_id", userId);// temporary disable
+    // TEAM LEAD → only his team
+    if (role === "Team Lead") {
+      const { data: team, error: teamError } = await supabaseAdmin
+        .from("employees")
+        .select("id")
+        .eq("manager_id", userId);
 
-  employeeIds = team.map(e => e.id)
-}
-// ✅ MANAGER → all except self
-else if (role === "Manager") {
-  const { data: all } = await supabaseAdmin
-    .from("employees")
-    .select("id")
-    .neq("id", userId);
+      if (teamError) throw teamError;
 
-  employeeIds = all.map(e => e.id)
-}
+      employeeIds = (team || []).map((e) => e.id);
+    }
+    // MANAGER → all except self
+    else if (role === "Manager") {
+      const { data: all, error: allError } = await supabaseAdmin
+        .from("employees")
+        .select("id")
+        .neq("id", userId);
 
-// ❌ no team
-if (!employeeIds.length) {
-  return res.json([]);
-}
+      if (allError) throw allError;
 
-// ✅ fetch leaves
-const { data, error } = await supabaseAdmin
-  .from("leaves")
-  .select("*, employees(name, role)")
-  //.in("employee_id", employeeIds)
-  .order("from_date", { ascending: false });
+      employeeIds = (all || []).map((e) => e.id);
+    }
 
-if (error) throw error;
+    if (!employeeIds.length) {
+      return res.json([]);
+    }
 
-res.json(data);
+    const { data, error } = await supabaseAdmin
+      .from("leaves")
+      .select("*, employees(name, role)")
+      .in("employee_id", employeeIds)
+      .order("from_date", { ascending: false });
 
+    if (error) throw error;
+
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -505,10 +514,26 @@ app.post("/api/upload-resume", authMiddleware, (req, res, next) => {
   });
 }, async (req, res) => {
   try {
-    const email = req.body.email;
-
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const { data: owner, error: ownerError } = await findEmailAddressForUserId(
+      req.user.id
+    );
+
+    if (ownerError) {
+      cleanupMulterFile(req.file);
+      return res.status(500).json({ error: ownerError.message });
+    }
+
+    const email = owner && owner.email
+      ? String(owner.email).toLowerCase().trim()
+      : "";
+
+    if (!email) {
+      cleanupMulterFile(req.file);
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const filePath = req.file.path;
@@ -614,6 +639,41 @@ app.post("/api/match", authMiddleware, async (req, res) => {
       return res.status(400).json({
         error: "candidateId missing"
       });
+    }
+
+    const { data: owner, error: ownerError } = await findEmailAddressForUserId(
+      req.user.id
+    );
+
+    if (ownerError) {
+      return res.status(500).json({ error: ownerError.message });
+    }
+
+    const ownerEmail = owner && owner.email
+      ? String(owner.email).toLowerCase().trim()
+      : "";
+
+    if (!ownerEmail) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const { data: candidate, error: candidateError } = await supabaseAdmin
+      .from("candidates")
+      .select("id, email")
+      .eq("id", Number(candidateId))
+      .maybeSingle();
+
+    if (candidateError) {
+      return res.status(500).json({ error: candidateError.message });
+    }
+
+    if (!candidate) {
+      return res.status(404).json({ error: "Candidate not found" });
+    }
+
+    const candidateEmail = String(candidate.email || "").toLowerCase().trim();
+    if (!candidateEmail || candidateEmail !== ownerEmail) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const stopwords = [
@@ -743,10 +803,16 @@ app.post("/api/work-request", authMiddleware, async (req, res) => {
 });
 app.get("/api/work-request", authMiddleware, async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("work_requests")
       .select("*, employees(name)")
       .order("created_at", { ascending: false });
+
+    if (!APPROVER_ROLES.includes(req.user.role)) {
+      query = query.eq("employee_id", req.user.id);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -814,7 +880,7 @@ app.get("/api/employees", authMiddleware, async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("employees")
-      .select("*");
+      .select("id, name, department, role, cl, sl, pl");
 
 
     if (error) throw error;
@@ -884,10 +950,36 @@ app.get(
   async (req, res) => {
     try {
 
-      // 1. Fetch requests WITHOUT Supabase relationship join
+      const userId = req.user.id;
+      const role = req.user.role;
+      let teamEmployeeIds = [];
+
+      if (role === "Team Lead") {
+        const { data: team, error: teamError } = await supabaseAdmin
+          .from("employees")
+          .select("id")
+          .eq("manager_id", userId);
+
+        if (teamError) throw teamError;
+        teamEmployeeIds = (team || []).map((e) => e.id);
+      } else if (role === "Manager") {
+        const { data: all, error: allError } = await supabaseAdmin
+          .from("employees")
+          .select("id")
+          .neq("id", userId);
+
+        if (allError) throw allError;
+        teamEmployeeIds = (all || []).map((e) => e.id);
+      }
+
+      if (!teamEmployeeIds.length) {
+        return res.json([]);
+      }
+
       const { data: requests, error: requestError } = await supabaseAdmin
         .from("attendance_regularization")
         .select("*")
+        .in("employee_id", teamEmployeeIds)
         .order("created_at", { ascending: false });
 
       if (requestError) {
@@ -898,7 +990,6 @@ app.get(
         return res.json([]);
       }
 
-      // 2. Get employee IDs
       const employeeIds = [
         ...new Set(
           requests
