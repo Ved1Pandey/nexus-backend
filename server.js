@@ -4,6 +4,7 @@
   const app = express();
   const cors = require("cors");
   const jwt = require("jsonwebtoken");
+  const crypto = require("crypto");
   const bcrypt = require("bcrypt");
   const { createClient } = require("@supabase/supabase-js");
   const authRoutes = require("./routes/authRoutes");
@@ -1068,10 +1069,19 @@ app.put("/api/attendance-regularization/:id", authMiddleware, requireApproverRol
 // ==============================
 
 const otpStore = new Map();
+const otpForgotCooldown = new Map();
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_COOLDOWN_MS = 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
 
 const { Resend } = require("resend");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
+
+const otpSentOk = (res) =>
+  res.json({
+    message: "OTP sent successfully",
+  });
 
 // SEND OTP
 app.post("/api/forgot-password", async (req, res) => {
@@ -1082,6 +1092,11 @@ app.post("/api/forgot-password", async (req, res) => {
       return res.status(400).json({
         message: "Email is required",
       });
+    }
+
+    const lastForgotAt = otpForgotCooldown.get(email);
+    if (lastForgotAt && Date.now() - lastForgotAt < OTP_COOLDOWN_MS) {
+      return otpSentOk(res);
     }
 
     const { data: users, error } = await supabaseAdmin
@@ -1096,34 +1111,32 @@ app.post("/api/forgot-password", async (req, res) => {
     }
 
     if (!users || users.length === 0) {
-      return res.status(404).json({
-        message: "Email not found",
-      });
+      otpForgotCooldown.set(email, Date.now());
+      return otpSentOk(res);
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = String(crypto.randomInt(100000, 1000000));
 
     otpStore.set(email, {
       otp,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      expiresAt: Date.now() + OTP_TTL_MS,
+      attempts: 0,
     });
 
-const { data, error: resendError } = await resend.emails.send({
-  from: "NexusHR <onboarding@resend.dev>",
-  to: [email],
-  subject: "NexusHR - Password Reset OTP",
-  text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`
-});
+    const { error: resendError } = await resend.emails.send({
+      from: "NexusHR <onboarding@resend.dev>",
+      to: [email],
+      subject: "NexusHR - Password Reset OTP",
+      text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
+    });
 
-if (resendError) {
-    throw new Error(resendError.message || "Failed to send email");
-}
+    if (resendError) {
+      throw new Error(resendError.message || "Failed to send email");
+    }
 
+    otpForgotCooldown.set(email, Date.now());
 
-res.json({
-    message: "OTP sent successfully",
-});
-
+    return otpSentOk(res);
   } catch (err) {
 
     res.status(500).json({
@@ -1155,15 +1168,30 @@ app.post("/api/verify-otp", async (req, res) => {
       });
     }
 
+    if (saved.verified) {
+      return res.json({
+        message: "OTP verified successfully",
+      });
+    }
+
     if (saved.otp !== otp) {
+      const attempts = (saved.attempts || 0) + 1;
+      if (attempts >= OTP_MAX_ATTEMPTS) {
+        otpStore.delete(email);
+      } else {
+        otpStore.set(email, {
+          ...saved,
+          attempts,
+        });
+      }
       return res.status(400).json({
         message: "Invalid OTP",
       });
     }
 
     otpStore.set(email, {
-      ...saved,
       verified: true,
+      expiresAt: saved.expiresAt,
     });
 
     res.json({
