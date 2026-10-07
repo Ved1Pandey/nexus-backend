@@ -7,7 +7,6 @@
   const crypto = require("crypto");
   const bcrypt = require("bcrypt");
   const { createClient } = require("@supabase/supabase-js");
-  const authRoutes = require("./routes/authRoutes");
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
@@ -64,7 +63,6 @@
   );
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
-  app.use("/api/auth", authRoutes);
 
   const PORT = process.env.PORT || 3001;
   const JWT_SECRET = process.env.JWT_SECRET;
