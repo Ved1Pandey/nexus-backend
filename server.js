@@ -1081,6 +1081,14 @@ const otpSentOk = (res) =>
     message: "OTP sent successfully",
   });
 
+const pruneExpiredForgotCooldowns = (now) => {
+  for (const [key, sentAt] of otpForgotCooldown) {
+    if (now - sentAt >= OTP_COOLDOWN_MS) {
+      otpForgotCooldown.delete(key);
+    }
+  }
+};
+
 // SEND OTP
 app.post("/api/forgot-password", async (req, res) => {
   try {
@@ -1092,8 +1100,11 @@ app.post("/api/forgot-password", async (req, res) => {
       });
     }
 
+    const now = Date.now();
+    pruneExpiredForgotCooldowns(now);
+
     const lastForgotAt = otpForgotCooldown.get(email);
-    if (lastForgotAt && Date.now() - lastForgotAt < OTP_COOLDOWN_MS) {
+    if (lastForgotAt && now - lastForgotAt < OTP_COOLDOWN_MS) {
       return otpSentOk(res);
     }
 
@@ -1114,22 +1125,35 @@ app.post("/api/forgot-password", async (req, res) => {
     }
 
     const otp = String(crypto.randomInt(100000, 1000000));
-
-    otpStore.set(email, {
+    const otpEntry = {
       otp,
       expiresAt: Date.now() + OTP_TTL_MS,
       attempts: 0,
-    });
+    };
 
-    const { error: resendError } = await resend.emails.send({
-      from: "NexusHR <onboarding@resend.dev>",
-      to: [email],
-      subject: "NexusHR - Password Reset OTP",
-      text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
-    });
+    otpStore.set(email, otpEntry);
 
-    if (resendError) {
-      throw new Error(resendError.message || "Failed to send email");
+    let sendFailed = false;
+    try {
+      const { error: resendError } = await resend.emails.send({
+        from: "NexusHR <onboarding@resend.dev>",
+        to: [email],
+        subject: "NexusHR - Password Reset OTP",
+        text: `Your NexusHR password reset OTP is ${otp}. This OTP is valid for 10 minutes.`,
+      });
+      if (resendError) {
+        sendFailed = true;
+      }
+    } catch {
+      sendFailed = true;
+    }
+
+    if (sendFailed) {
+      if (otpStore.get(email) === otpEntry) {
+        otpStore.delete(email);
+      }
+      console.error("OTP email send failed");
+      return otpSentOk(res);
     }
 
     otpForgotCooldown.set(email, Date.now());
