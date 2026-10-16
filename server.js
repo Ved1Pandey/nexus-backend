@@ -447,6 +447,21 @@ app.put("/api/leaves/:id", authMiddleware, requireApproverRole, async (req, res)
       return res.status(404).json({ error: "Leave not found" });
     }
 
+    if (req.user.role === "Team Lead") {
+      const { data: report, error: reportError } = await supabaseAdmin
+        .from("employees")
+        .select("id")
+        .eq("id", leave.employee_id)
+        .eq("manager_id", req.user.id)
+        .maybeSingle();
+
+      if (reportError) throw reportError;
+
+      if (!report) {
+        return res.status(404).json({ error: "Leave not found" });
+      }
+    }
+
     // 2. ONLY IF APPROVED → deduct balance
 
 
@@ -834,6 +849,21 @@ app.put("/api/work-request/:id", authMiddleware, requireApproverRole, async (req
       return res.status(404).json({ error: "Work request not found" });
     }
 
+    if (req.user.role === "Team Lead") {
+      const { data: report, error: reportError } = await supabaseAdmin
+        .from("employees")
+        .select("id")
+        .eq("id", existing.employee_id)
+        .eq("manager_id", req.user.id)
+        .maybeSingle();
+
+      if (reportError) throw reportError;
+
+      if (!report) {
+        return res.status(404).json({ error: "Work request not found" });
+      }
+    }
+
     const { error } = await supabaseAdmin
       .from("work_requests")
       .update({
@@ -1043,6 +1073,21 @@ app.put("/api/attendance-regularization/:id", authMiddleware, requireApproverRol
 
     if (loadError || !existing) {
       return res.status(404).json({ error: "Attendance regularization not found" });
+    }
+
+    if (req.user.role === "Team Lead") {
+      const { data: report, error: reportError } = await supabaseAdmin
+        .from("employees")
+        .select("id")
+        .eq("id", existing.employee_id)
+        .eq("manager_id", req.user.id)
+        .maybeSingle();
+
+      if (reportError) throw reportError;
+
+      if (!report) {
+        return res.status(404).json({ error: "Attendance regularization not found" });
+      }
     }
 
     const { error } = await supabaseAdmin
