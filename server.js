@@ -999,6 +999,15 @@ app.post("/api/forgot-password", async (req, res) => {
       .eq("email", email);
 
     if (error) {
+      const safeMessage = String(error.message || "")
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted]")
+        .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+        .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted]")
+        .slice(0, 200);
+      console.error("forgot-password supabase lookup failed", {
+        code: error.code || null,
+        message: safeMessage,
+      });
       return res.status(500).json({
         message: "Server error",
       });
