@@ -1,12 +1,9 @@
-  require("dotenv").config();
-
   const express = require("express");
   const app = express();
   const cors = require("cors");
   const jwt = require("jsonwebtoken");
   const crypto = require("crypto");
   const bcrypt = require("bcrypt");
-  const { createClient } = require("@supabase/supabase-js");
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const fs = require("fs");
@@ -64,11 +61,15 @@
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  const PORT = process.env.PORT || 3001;
-  const JWT_SECRET = process.env.JWT_SECRET;
-  const supabaseAdmin = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY);
+  let JWT_SECRET;
+  let supabaseAdmin;
+  let resend;
+
+  function initRuntime({ supabase, jwtSecret, resend: injectedResend }) {
+    supabaseAdmin = supabase;
+    JWT_SECRET = jwtSecret;
+    resend = injectedResend;
+  }
 
   async function findEmailForLogin(normalizedEmail) {
     return supabaseAdmin
@@ -1117,10 +1118,6 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_COOLDOWN_MS = 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
 
-const { Resend } = require("resend");
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 const otpSentOk = (res) =>
   res.json({
     message: "OTP sent successfully",
@@ -1331,7 +1328,29 @@ app.post("/api/reset-password", async (req, res) => {
     res.json({ ok: true });
   });
 
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
+  function startServer() {
+    require("dotenv").config();
+    const { createClient } = require("@supabase/supabase-js");
+    const { Resend } = require("resend");
+    const port = process.env.PORT || 3001;
+
+    initRuntime({
+      supabase: createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_KEY
+      ),
+      jwtSecret: process.env.JWT_SECRET,
+      resend: new Resend(process.env.RESEND_API_KEY),
+    });
+
+    app.listen(port, () => {
+      console.log(`🚀 Server running on http://localhost:${port}`);
+    });
+  }
+
+  if (require.main === module) {
+    startServer();
+  }
+
+  module.exports = { app, initRuntime };
  //vedpandey
